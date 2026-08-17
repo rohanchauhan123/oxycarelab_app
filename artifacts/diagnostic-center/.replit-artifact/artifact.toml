@@ -1,0 +1,28 @@
+kind = "web"
+previewPath = "/"
+title = "Diagnostic Center Operations"
+description = "A production-oriented diagnostic center management platform for appointments, patients, tests, payments, reports, notifications, and operational analytics."
+version = "1.0.0"
+id = "artifacts/diagnostic-center"
+router = "path"
+
+[[services]]
+name = "web"
+paths = [ "/" ]
+localPort = 25685
+
+[services.development]
+run = "pnpm --filter @workspace/diagnostic-center run dev"
+
+[services.production]
+build = [ "pnpm", "--filter", "@workspace/diagnostic-center", "run", "build" ]
+serve = "static"
+publicDir = "artifacts/diagnostic-center/dist/public"
+
+[[services.production.rewrites]]
+from = "/*"
+to = "/index.html"
+
+[services.env]
+PORT = "25685"
+BASE_PATH = "/"

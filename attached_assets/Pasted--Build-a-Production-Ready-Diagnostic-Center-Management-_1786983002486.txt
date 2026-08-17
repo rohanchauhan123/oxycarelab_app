@@ -1,0 +1,1610 @@
+# Build a Production-Ready Diagnostic Center Management & Appointment System
+
+Build a modern, responsive, production-ready web application for a diagnostic center to manage patients, appointments, tests, packages, labs, slots, payments, reports, users, notifications, WhatsApp communication and analytics.
+
+This is NOT a simple appointment booking website.
+
+It should be an internal operational platform similar to a lightweight diagnostic-center CRM/LIS appointment management system.
+
+The application must be designed with scalability, security, real-time updates, role-based access control, audit logging and future multi-branch support in mind.
+
+---
+
+# 1. Recommended Technology Stack
+
+Use a modern full-stack architecture.
+
+Preferred stack:
+
+* Frontend: React / Next.js
+* UI: Tailwind CSS
+* Component library: shadcn/ui or an equivalent modern component library
+* Backend: Node.js with Express OR Next.js API routes
+* Database: PostgreSQL
+* ORM: Prisma
+* Authentication: Secure session/JWT based authentication
+* Real-time updates: WebSockets / Socket.IO / Supabase Realtime
+* File storage: S3-compatible storage
+* Charts: Recharts or equivalent
+* Validation: Zod
+* Password hashing: bcrypt/argon2
+* API documentation: OpenAPI/Swagger if practical
+
+Use TypeScript throughout the application.
+
+If Replit's environment makes another equivalent technology more practical, maintain the same architecture and functionality.
+
+Do NOT use mock data as the final implementation.
+
+Create a proper PostgreSQL database schema and migrations.
+
+---
+
+# 2. Main User Roles
+
+Create these roles:
+
+## SUPER_ADMIN
+
+Full system-level access.
+
+Can:
+
+* Manage organizations/branches
+* Manage admins
+* Manage all users
+* Manage system configuration
+* View all data
+* View audit logs
+* Manage WhatsApp configuration
+* Manage notification templates
+* Manage permissions
+
+## ADMIN
+
+Full operational control.
+
+Can:
+
+* Add/edit/delete tests
+* Add/edit/delete packages
+* Manage labs
+* Manage branches
+* Manage pricing
+* Manage slots
+* Manage users
+* Manage doctors
+* Manage agents
+* Manage frontdesk users
+* View all appointments
+* Modify appointment status
+* Modify payment status
+* Upload reports
+* View analytics
+* Create notifications
+* View audit logs
+* Configure appointment settings
+
+## FRONTDESK
+
+Can:
+
+* View today's appointments
+* View future appointments
+* Search patients
+* Search appointments
+* Filter appointments
+* Create appointments
+* Edit appointments
+* Change appointment status
+* Change payment status
+* Upload reports
+* Send/resend patient notifications
+* View patient history
+* View appointment details
+
+Cannot:
+
+* Manage system users
+* Change test master data
+* Change pricing
+* Manage slots
+* Access system configuration
+
+## AGENT
+
+Can:
+
+* Create appointments
+* View appointments
+* Search patients
+* View patient history
+* Check appointment status
+* View available slots
+* Edit permitted appointment details
+
+Agents should NOT be able to modify master test/package pricing.
+
+## DOCTOR
+
+Doctors have functionality similar to agents but with restricted visibility.
+
+Doctors can:
+
+* Create appointments
+* View appointments created by themselves
+* Search their patients
+* View their appointment history
+* Check appointment status
+* View available slots
+
+Doctors must NOT see appointments created by other doctors unless explicitly permitted.
+
+---
+
+# 3. Authentication
+
+Create a secure login system.
+
+Login fields:
+
+* Email/username
+* Password
+
+Features:
+
+* Secure password hashing
+* Session management
+* Logout
+* Forgot password
+* Change password
+* Account active/inactive status
+* Role-based authorization
+* Route protection
+* API-level authorization
+
+Do NOT rely only on frontend role checks.
+
+Every sensitive backend API must verify permissions.
+
+---
+
+# 4. Dashboard
+
+Create a different dashboard experience based on role.
+
+## Admin Dashboard
+
+Display:
+
+* Today's total appointments
+* Confirmed appointments
+* Pending appointments
+* Completed tests
+* Cancelled appointments
+* No-shows
+* Pending payments
+* Today's revenue
+* Upcoming appointments
+* Reports pending
+* Reports uploaded today
+* WhatsApp messages sent
+* Failed notifications
+
+Charts:
+
+* Daily appointments
+* Weekly appointments
+* Monthly appointments
+* Revenue trend
+* Test-wise appointments
+* Lab-wise appointments
+* Agent-wise appointments
+* Doctor-wise appointments
+* Payment status
+* Appointment status
+* Appointment source
+
+Use cards, charts and tables.
+
+---
+
+# 5. Patient Management
+
+Create a Patient Master module.
+
+Patient fields:
+
+* Patient ID / UHID
+* Full name
+* Mobile number
+* WhatsApp number
+* Email
+* Date of birth
+* Age
+* Gender
+* Address
+* City
+* Referring doctor
+* Emergency contact
+* Notes
+* Created date
+
+Patient ID should be unique.
+
+When creating an appointment:
+
+1. Search existing patient by mobile/UHID/name.
+2. If patient exists, reuse the patient.
+3. Otherwise create a new patient.
+4. Never create duplicate patients unnecessarily.
+
+Patient profile should display:
+
+* Basic details
+* Appointment history
+* Test history
+* Payment history
+* Report history
+* WhatsApp communication history
+
+---
+
+# 6. Appointment Management
+
+This is the core module.
+
+Appointment fields:
+
+* Appointment ID
+* Patient
+* Branch
+* Lab
+* Test/package
+* Appointment date
+* Appointment time
+* Slot ID
+* Referring doctor
+* Created by
+* Assigned agent
+* Appointment source
+* Payment status
+* Appointment status
+* Amount
+* Discount
+* Final amount
+* Notes
+* Created timestamp
+* Updated timestamp
+
+Appointment sources:
+
+* Agent
+* Doctor
+* Frontdesk
+* Website
+* Phone
+* Walk-in
+* Other
+
+---
+
+# 7. Appointment Status Workflow
+
+Implement these statuses:
+
+* Draft
+* Slot Reserved
+* Pending Payment
+* Confirmed
+* Rescheduled
+* Patient Arrived
+* Sample Collected
+* Test In Progress
+* Test Completed
+* Report Pending
+* Report Ready
+* Report Sent
+* Completed
+* Cancelled
+* No Show
+
+Every status change must be logged.
+
+Store:
+
+* Previous status
+* New status
+* Changed by
+* Timestamp
+* Optional reason
+
+Do not allow invalid status transitions without proper permission.
+
+---
+
+# 8. Appointment Listing
+
+The appointment listing is extremely important.
+
+Default sorting:
+
+Appointment date ascending
+
+Then:
+
+Appointment time ascending
+
+Display maximum 50 appointments per page.
+
+Implement server-side pagination.
+
+Example:
+
+Page 1 = appointments 1-50
+
+Page 2 = appointments 51-100
+
+Do NOT load thousands of appointments into the browser.
+
+Filters:
+
+* Date
+* Date range
+* Time
+* Appointment status
+* Payment status
+* Test
+* Package
+* Lab
+* Branch
+* Doctor
+* Agent
+* Frontdesk user
+* Appointment source
+
+Search:
+
+* Patient name
+* Patient mobile
+* UHID
+* Appointment ID
+
+Add quick date buttons:
+
+* Today
+* Tomorrow
+* Yesterday
+* This Week
+* Next Week
+* Custom Date
+
+---
+
+# 9. Real-Time Appointment Board
+
+All authorized users should see real-time appointment updates.
+
+Example:
+
+Agent A creates appointment.
+
+Without refreshing the browser:
+
+Frontdesk dashboard should immediately display the new appointment.
+
+If Frontdesk changes:
+
+Payment Pending → Paid
+
+all authorized connected users should receive the update.
+
+If an appointment is cancelled, the appointment board should update immediately.
+
+Use WebSockets / Socket.IO / Supabase Realtime.
+
+Implement proper authorization for real-time channels.
+
+Users must only receive events they are authorized to see.
+
+---
+
+# 10. Slot Management
+
+Admin should be able to create appointment slots.
+
+Slot fields:
+
+* Branch
+* Lab
+* Test/package
+* Date
+* Start time
+* End time
+* Maximum capacity
+* Current bookings
+* Status
+
+Example:
+
+PET CT
+
+10:00 AM - 10:30 AM
+
+Capacity: 2
+
+If two appointments are booked, the slot becomes unavailable.
+
+Support:
+
+* Different slots for different tests
+* Different capacity for different tests
+* Different slots for different labs
+* Holiday dates
+* Blocked dates
+* Blocked slots
+* Recurring slots
+* Special slots
+
+---
+
+# 11. Prevent Double Booking
+
+This is mandatory.
+
+The backend/database must prevent two users from booking the same available capacity simultaneously.
+
+Do NOT depend only on frontend checks.
+
+Use database transactions and appropriate constraints/locking.
+
+Example:
+
+If slot capacity = 2 and two users attempt booking simultaneously:
+
+Only two appointments may succeed.
+
+The third request must receive:
+
+"Slot no longer available."
+
+---
+
+# 12. Test Master
+
+Admin can create tests.
+
+Fields:
+
+* Test ID
+* Test name
+* Short name
+* Description
+* Department
+* Lab
+* Preparation instructions
+* Sample type
+* Duration
+* Price
+* Active/inactive
+* Report turnaround time
+
+Examples:
+
+* PET CT
+* CT Scan
+* MRI
+* Ultrasound
+* Blood Tests
+* X-Ray
+
+---
+
+# 13. Package Master
+
+Admin can create packages.
+
+Package fields:
+
+* Package ID
+* Package name
+* Description
+* Included tests
+* Price
+* Discount
+* Final price
+* Active/inactive
+
+Example:
+
+"Full Body Health Package"
+
+containing:
+
+* CBC
+* LFT
+* KFT
+* Lipid Profile
+* Thyroid
+
+---
+
+# 14. Pricing
+
+Create a proper pricing module.
+
+Support:
+
+* Test price
+* Package price
+* Branch-specific pricing
+* Lab-specific pricing
+* Discount
+* Promotional pricing
+* Effective date
+* Expiry date
+
+Do NOT hard-code prices inside frontend components.
+
+Prices must come from the database.
+
+When an appointment is created, store the actual charged price on the appointment.
+
+This is important because future price changes should not change historical appointment amounts.
+
+---
+
+# 15. Payment Management
+
+Payment statuses:
+
+* Pending
+* Partially Paid
+* Paid
+* Refunded
+* Failed
+* Cancelled
+
+Payment fields:
+
+* Appointment
+* Amount
+* Payment method
+* Transaction/reference ID
+* Payment date
+* Received by
+* Notes
+
+Payment methods:
+
+* Cash
+* UPI
+* Card
+* Bank Transfer
+* Online Payment
+* Other
+
+Maintain payment history.
+
+Do not simply overwrite the payment record.
+
+Create transaction records.
+
+---
+
+# 16. Reports
+
+Frontdesk/Admin can upload reports.
+
+Report fields:
+
+* Report ID
+* Appointment
+* Patient
+* File
+* Uploaded by
+* Upload date
+* Report status
+* Version
+
+Support:
+
+* PDF
+* Images where required
+
+Reports must be stored securely.
+
+Do NOT expose report files through predictable public URLs.
+
+Generate secure access links.
+
+Support report versions.
+
+Example:
+
+Report v1
+
+Report v2
+
+Latest version should be clearly marked.
+
+---
+
+# 17. WhatsApp Notification System
+
+Create a dedicated notification service.
+
+Do not hard-code WhatsApp logic inside appointment controllers.
+
+Create a notification/event architecture.
+
+Events:
+
+### Appointment Booked
+
+Send:
+
+"Your appointment has been successfully booked."
+
+### Payment Received
+
+"Your payment has been received."
+
+### Appointment Reminder
+
+Send reminder before appointment.
+
+Recommended reminders:
+
+* 24 hours before
+* Optional configurable reminder before appointment
+
+### Appointment Rescheduled
+
+Send updated date/time.
+
+### Appointment Cancelled
+
+Send cancellation message.
+
+### Test Completed
+
+Inform patient that the test has been completed.
+
+### Report Ready
+
+Send secure report link.
+
+### Report Uploaded
+
+Automatically trigger report notification.
+
+---
+
+# 18. WhatsApp Template Management
+
+Admin should be able to configure notification templates.
+
+Template types:
+
+* Appointment Confirmation
+* Payment Confirmation
+* Appointment Reminder
+* Appointment Rescheduled
+* Appointment Cancelled
+* Test Completed
+* Report Ready
+
+Support variables:
+
+{{patient_name}}
+
+{{appointment_id}}
+
+{{test_name}}
+
+{{appointment_date}}
+
+{{appointment_time}}
+
+{{lab_name}}
+
+{{amount}}
+
+{{report_link}}
+
+Do not send arbitrary uncontrolled messages through automated workflows.
+
+Keep WhatsApp integration abstracted so the provider can later be changed.
+
+Example architecture:
+
+NotificationService
+
+→ WhatsAppProvider
+
+→ Meta WhatsApp Cloud API / approved provider
+
+---
+
+# 19. WhatsApp Message Logs
+
+Create a communication log.
+
+Fields:
+
+* Patient
+* Appointment
+* Message type
+* Template
+* Provider message ID
+* Status
+* Sent timestamp
+* Delivered timestamp
+* Read timestamp
+* Failure reason
+
+Statuses:
+
+* Queued
+* Sent
+* Delivered
+* Read
+* Failed
+
+Add a retry mechanism for failed messages.
+
+Use background jobs/queues for notifications so appointment creation does not wait for WhatsApp API response.
+
+---
+
+# 20. Notification Center
+
+Admin should be able to create internal notifications.
+
+Example:
+
+"Tomorrow PET CT slots are completely booked."
+
+Notifications can be targeted to:
+
+* All users
+* Admin
+* Frontdesk
+* Agents
+* Doctors
+* Specific branch
+
+Create:
+
+* In-app notification
+* Read/unread status
+* Timestamp
+
+---
+
+# 21. Appointment Timeline
+
+Every appointment should have a timeline.
+
+Example:
+
+10:05 AM — Appointment created by Agent Rahul
+
+10:06 AM — Payment marked Pending
+
+10:12 AM — Payment marked Paid by Frontdesk
+
+09:45 AM next day — Patient Arrived
+
+10:20 AM — Sample Collected
+
+12:30 PM — Test Completed
+
+03:15 PM — Report Uploaded
+
+03:16 PM — WhatsApp report notification sent
+
+This should be visible from the appointment details page.
+
+---
+
+# 22. Audit Logs
+
+Create a global audit log.
+
+Track important actions:
+
+* Login
+* Logout
+* Patient creation
+* Patient modification
+* Appointment creation
+* Appointment modification
+* Appointment cancellation
+* Payment update
+* Report upload
+* Test creation
+* Price modification
+* Slot modification
+* User creation
+* Permission changes
+
+Store:
+
+* User
+* Role
+* Action
+* Entity
+* Entity ID
+* Old data
+* New data
+* IP address where available
+* Timestamp
+
+Admin/Super Admin can view audit logs.
+
+---
+
+# 23. Multi-Branch Ready Architecture
+
+Even if initially there is only one diagnostic center, design the database for multiple branches.
+
+Create:
+
+Organization
+
+→ Branch
+
+→ Lab
+
+→ Tests
+
+→ Slots
+
+→ Appointments
+
+Users can be assigned to branches.
+
+Admin can optionally see:
+
+* All branches
+* Specific branch
+
+Later we should be able to add another diagnostic center/branch without redesigning the database.
+
+---
+
+# 24. Doctor Management
+
+Create Doctor Master.
+
+Fields:
+
+* Doctor ID
+* Name
+* Mobile
+* Email
+* Specialization
+* Registration number
+* Hospital/clinic
+* Active/inactive
+
+Appointments should store the referring doctor.
+
+Doctors can also have login accounts.
+
+---
+
+# 25. Search
+
+Create a global search.
+
+Search by:
+
+* Patient name
+* Mobile
+* UHID
+* Appointment ID
+* Test
+* Doctor
+* Agent
+
+Search results should clearly distinguish:
+
+Patient
+
+Appointment
+
+Report
+
+---
+
+# 26. Frontdesk UI
+
+Design the Frontdesk interface for speed.
+
+The appointment table should be the main screen.
+
+Columns:
+
+* Time
+* Appointment ID
+* Patient
+* Mobile
+* Test
+* Lab
+* Doctor
+* Payment
+* Appointment Status
+* Report
+* Created By
+* Actions
+
+Use status badges.
+
+Add quick action buttons:
+
+* View
+* Edit
+* Payment
+* Arrived
+* Test Done
+* Upload Report
+* Send WhatsApp
+* Cancel
+
+Avoid excessive page navigation.
+
+---
+
+# 27. Agent UI
+
+Agents should have:
+
+Dashboard
+
+Appointments
+
+Create Appointment
+
+Patients
+
+Appointment History
+
+The Create Appointment workflow should be very fast.
+
+Prefer a multi-step form:
+
+Step 1: Patient
+
+Step 2: Test/package
+
+Step 3: Date/time
+
+Step 4: Doctor/referral
+
+Step 5: Payment
+
+Step 6: Confirmation
+
+Show available slots in real time.
+
+---
+
+# 28. Doctor UI
+
+Doctors should have:
+
+* Dashboard
+* Create Appointment
+* My Appointments
+* Patients
+* Appointment History
+
+Doctors should only see their own appointments.
+
+---
+
+# 29. Admin UI
+
+Admin sidebar:
+
+Dashboard
+
+Appointments
+
+Patients
+
+Tests
+
+Packages
+
+Labs
+
+Branches
+
+Doctors
+
+Pricing
+
+Slots
+
+Payments
+
+Reports
+
+Users
+
+Notifications
+
+WhatsApp
+
+Analytics
+
+Audit Logs
+
+Settings
+
+---
+
+# 30. Analytics
+
+Build an analytics section.
+
+Filters:
+
+* Today
+* Yesterday
+* This Week
+* This Month
+* Custom Range
+* Branch
+* Lab
+* Test
+* Agent
+* Doctor
+
+Metrics:
+
+Appointments
+
+Completed tests
+
+Cancelled appointments
+
+No-shows
+
+Revenue
+
+Average appointment value
+
+Pending payments
+
+Test-wise revenue
+
+Agent performance
+
+Doctor appointment volume
+
+Lab performance
+
+Conversion rate
+
+Report turnaround time
+
+WhatsApp delivery rate
+
+---
+
+# 31. Security
+
+This is a healthcare-related application, so security is important.
+
+Implement:
+
+* Role-based access control
+* Backend authorization
+* Secure password hashing
+* Secure sessions
+* Input validation
+* SQL injection protection
+* XSS protection
+* CSRF protection where applicable
+* Rate limiting
+* Secure file uploads
+* File type validation
+* File size limits
+* Secure report URLs
+* Audit logging
+* No sensitive information in browser localStorage unnecessarily
+* Environment variables for secrets
+* Never commit API keys
+* Never expose database credentials to frontend
+* HTTPS-ready configuration
+
+---
+
+# 32. Database Design
+
+Create normalized PostgreSQL tables/entities including at minimum:
+
+* users
+* roles
+* permissions
+* user_roles
+* organizations
+* branches
+* labs
+* patients
+* doctors
+* tests
+* packages
+* package_tests
+* prices
+* slots
+* appointments
+* appointment_items
+* appointment_status_history
+* payments
+* payment_transactions
+* reports
+* report_versions
+* notifications
+* notification_templates
+* notification_logs
+* audit_logs
+
+Use proper:
+
+* Primary keys
+* Foreign keys
+* Unique constraints
+* Indexes
+* Timestamps
+* Soft deletion where appropriate
+
+Add indexes for frequently searched fields such as:
+
+* patient mobile
+* UHID
+* appointment ID
+* appointment date
+* appointment status
+* slot ID
+* branch ID
+* doctor ID
+* agent ID
+
+---
+
+# 33. Data Integrity
+
+Do not permanently delete important medical/financial records casually.
+
+Use soft delete where appropriate.
+
+Historical appointments must remain intact even if:
+
+* Test becomes inactive
+* User becomes inactive
+* Doctor is removed
+* Price changes
+* Package changes
+
+Historical appointment data must preserve the original charged amount and relevant snapshot information.
+
+---
+
+# 34. UI/UX Requirements
+
+Create a professional healthcare dashboard.
+
+Design should be:
+
+* Clean
+* Fast
+* Modern
+* Responsive
+* Desktop-first because frontdesk will mainly use desktop
+* Mobile responsive for agents/doctors
+* Accessible
+* Easy to understand
+
+Use:
+
+* Sidebar navigation
+* Top navigation
+* Breadcrumbs
+* Cards
+* Tables
+* Filters
+* Search
+* Modals
+* Drawers
+* Toast notifications
+* Status badges
+* Confirmation dialogs
+
+Do not overuse animations.
+
+Prioritize operational speed.
+
+---
+
+# 35. Important Appointment Table Behavior
+
+The appointment table must:
+
+* Show appointments in increasing time order
+* Show maximum 50 records per page
+* Use server-side pagination
+* Allow date switching
+* Allow filtering
+* Allow search
+* Allow sorting where appropriate
+* Update in real time
+* Preserve filters during real-time updates
+* Show empty states
+* Show loading states
+* Show error states
+
+---
+
+# 36. Real-Time Conflict Handling
+
+If two users edit the same appointment:
+
+The application should detect stale data/version conflicts.
+
+Do not silently overwrite changes.
+
+Use optimistic locking/version numbers or another appropriate concurrency mechanism.
+
+Display:
+
+"This appointment was updated by another user. Please refresh the latest information before saving."
+
+---
+
+# 37. Background Jobs
+
+Use background jobs for:
+
+* WhatsApp messages
+* Appointment reminders
+* Report notifications
+* Retry failed notifications
+* Scheduled tasks
+
+Do not block the main appointment creation request while sending external messages.
+
+---
+
+# 38. API Architecture
+
+Create clean REST APIs or equivalent server APIs.
+
+Organize APIs logically:
+
+/auth
+
+/users
+
+/patients
+
+/appointments
+
+/tests
+
+/packages
+
+/labs
+
+/branches
+
+/doctors
+
+/slots
+
+/payments
+
+/reports
+
+/notifications
+
+/whatsapp
+
+/analytics
+
+/audit-logs
+
+Use proper HTTP status codes.
+
+Return consistent API responses.
+
+Validate every request.
+
+---
+
+# 39. Error Handling
+
+Create proper global error handling.
+
+Never show raw backend/database errors to users.
+
+Show friendly messages such as:
+
+"Unable to book this slot because it is no longer available."
+
+"Unable to upload the report. Please try again."
+
+"Payment update failed."
+
+Log technical errors on the server.
+
+---
+
+# 40. Seed Data
+
+Create realistic seed data for development.
+
+Include:
+
+* 1 organization
+* 2 branches
+* Multiple labs
+* 5+ tests
+* 3+ packages
+* Multiple doctors
+* Admin account
+* Frontdesk account
+* Agent accounts
+* Doctor accounts
+* Sample patients
+* Sample appointments
+* Sample slots
+* Sample payments
+
+Clearly document development login credentials.
+
+Do not hard-code credentials into production.
+
+---
+
+# 41. Environment Variables
+
+Create `.env.example`.
+
+Include placeholders for:
+
+DATABASE_URL
+
+JWT_SECRET / SESSION_SECRET
+
+S3 credentials
+
+WHATSAPP_API credentials
+
+EMAIL credentials if required
+
+Application URL
+
+Other required secrets
+
+Never commit actual secrets.
+
+---
+
+# 42. Deployment
+
+The application should be deployable on Replit.
+
+Create:
+
+* Proper start command
+* Development command
+* Production command
+* Database migration command
+* Database seed command
+* Environment variable documentation
+
+The application should work after:
+
+npm install
+
+database setup
+
+migration
+
+seed
+
+npm run dev
+
+---
+
+# 43. Testing
+
+Create tests for critical functionality.
+
+At minimum test:
+
+* Login
+* Role permissions
+* Patient creation
+* Appointment creation
+* Slot availability
+* Double-booking prevention
+* Payment updates
+* Appointment status transitions
+* Report upload
+* Doctor appointment visibility
+* Agent appointment visibility
+* Admin access
+* Real-time appointment updates
+
+The double-booking test is particularly important.
+
+---
+
+# 44. UX Details
+
+When creating an appointment:
+
+Show available slots visually.
+
+Example:
+
+10:00 AM    Available 2/2
+
+10:30 AM    Available 1/2
+
+11:00 AM    FULL
+
+11:30 AM    Available 2/2
+
+Use clear status colors/badges but do not rely on color alone.
+
+Before cancelling an appointment ask for a cancellation reason.
+
+Before changing payment status ask for confirmation.
+
+Before uploading a report validate file type and size.
+
+---
+
+# 45. Future Extensibility
+
+Design the architecture so these features can be added later without major rewrites:
+
+* Online patient booking
+* Payment gateway
+* Website integration
+* Call-center integration
+* CRM
+* SMS
+* Email
+* WhatsApp Cloud API
+* Multiple diagnostic centers
+* Home sample collection
+* Radiology workflow
+* LIS integration
+* PACS integration
+* Doctor referral portal
+* Patient portal
+* Mobile application
+* QR-based appointment check-in
+* Digital token system
+* Invoice generation
+* GST invoices
+* Accounting integration
+
+---
+
+# 46. Important Business Rule
+
+The appointment should be the central entity connecting:
+
+Patient
+
+Test/Package
+
+Slot
+
+Lab
+
+Doctor
+
+Agent
+
+Payment
+
+Report
+
+Notification
+
+Timeline
+
+Audit Log
+
+Design the database around this relationship.
+
+---
+
+# 47. Build Order
+
+Do not try to build everything as one giant unstructured component.
+
+Build in phases:
+
+PHASE 1:
+Authentication + database + RBAC
+
+PHASE 2:
+Patients + tests + packages + labs + doctors
+
+PHASE 3:
+Slots + appointment creation
+
+PHASE 4:
+Appointment dashboard + filters + pagination
+
+PHASE 5:
+Payments
+
+PHASE 6:
+Reports
+
+PHASE 7:
+Real-time updates
+
+PHASE 8:
+WhatsApp notification architecture
+
+PHASE 9:
+Analytics
+
+PHASE 10:
+Audit logs + security hardening
+
+PHASE 11:
+Testing + production deployment
+
+After each phase, make sure the application remains runnable.
+
+---
+
+# 48. Critical Requirement
+
+Do not generate only static UI screens.
+
+I need a functional application with:
+
+* Real database
+* Real authentication
+* Real CRUD
+* Real APIs
+* Real role permissions
+* Real appointment workflow
+* Real slot availability
+* Real pagination
+* Real-time updates
+* Real payment records
+* Real report upload
+* Real audit logs
+
+Use realistic seed data for development, but architecture must support production data.
+
+Start by designing the database schema and application architecture.
+
+Then implement authentication and RBAC.
+
+Then build the core appointment workflow.
+
+Keep the code modular and maintainable.
+
+Avoid putting the entire application into a few huge files.
+
+Use reusable components, services, controllers/routes, database models and validation schemas.
+
+Before considering the project complete, test the critical appointment booking workflow end-to-end.

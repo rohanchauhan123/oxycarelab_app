@@ -1,0 +1,1 @@
+- [OpenAPI/Zod compatibility](openapi-zod-compat.md) — integer schemas currently generate an unsupported zod.int(); verify codegen and libs together.
