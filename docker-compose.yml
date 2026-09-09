@@ -1,0 +1,33 @@
+services:
+  app:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    restart: always
+    ports:
+      - "5001:5001"
+    environment:
+      - NODE_ENV=production
+      - PORT=5001
+      - DATABASE_URL=postgresql://oxycare:oxycare_secure_pass@db:5432/oxycare_lis
+    depends_on:
+      db:
+        condition: service_healthy
+
+  db:
+    image: postgres:16-alpine
+    restart: always
+    environment:
+      POSTGRES_USER: oxycare
+      POSTGRES_PASSWORD: oxycare_secure_pass
+      POSTGRES_DB: oxycare_lis
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U oxycare -d oxycare_lis"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+volumes:
+  postgres_data:

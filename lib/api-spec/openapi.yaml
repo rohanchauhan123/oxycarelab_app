@@ -301,12 +301,19 @@ components:
         date: { type: string }
         time: { type: string }
         doctor: { type: ["string", "null"] }
+        referredBy: { type: ["string", "null"] }
         status: { type: string }
         paymentStatus: { type: string }
         reportStatus: { type: string }
         amount: { type: number }
+        totalPrice: { type: number }
+        advancePayment: { type: number }
+        remainingAmount: { type: number }
         source: { type: string }
         createdBy: { type: string }
+        prescriptionUrl: { type: ["string", "null"] }
+        invoiceUrl: { type: ["string", "null"] }
+        reportUrl: { type: ["string", "null"] }
         notes: { type: ["string", "null"] }
         updatedAt: { type: string }
     AppointmentPage:
@@ -330,7 +337,10 @@ components:
         time: { type: string }
         slotId: { type: string }
         doctor: { type: string }
+        referredBy: { type: string }
         source: { type: string }
+        totalPrice: { type: number }
+        advancePayment: { type: number }
         paymentStatus: { type: string }
         notes: { type: string }
     StatusUpdate:

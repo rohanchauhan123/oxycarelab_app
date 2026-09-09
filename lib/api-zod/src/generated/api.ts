@@ -79,7 +79,7 @@ export const ListAppointmentsResponse = zod.object({
   "createdBy": zod.string(),
   "notes": zod.string().nullish(),
   "updatedAt": zod.string().optional()
-})),
+}).passthrough()),
   "page": zod.number(),
   "pageSize": zod.number(),
   "total": zod.number()
@@ -291,7 +291,7 @@ export const ListTestsResponseItem = zod.object({
   "duration": zod.number(),
   "price": zod.number(),
   "active": zod.boolean()
-})
+}).passthrough()
 export const ListTestsResponse = zod.array(ListTestsResponseItem)
 
 
