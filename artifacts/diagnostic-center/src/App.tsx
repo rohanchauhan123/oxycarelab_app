@@ -5358,8 +5358,8 @@ function AuditLogs() {
 
 // Secure Oxycare Authentication Portal
 function LoginPage({ onLoginSuccess }: { onLoginSuccess: (user: UserAccount) => void }) {
-  const [email, setEmail] = useState('dushyant@oxycare.in');
-  const [password, setPassword] = useState('admin123');
+  const [email, setEmail] = useState('');
+  const [password, setPassword] = useState('');
   const [loading, setLoading] = useState(false);
 
   const submit = async (event: FormEvent) => {
@@ -5477,17 +5477,7 @@ function App() {
         }
       } catch {}
     }
-    const defaultSuperAdmin: UserAccount = {
-      id: 'usr-superadmin',
-      name: 'Dushyant pandat',
-      email: 'dushyant@oxycare.in',
-      role: 'SUPER_ADMIN',
-      branch: 'Oxycare Main Center',
-      active: true,
-      permissions: ROLE_DEFAULT_PERMISSIONS.SUPER_ADMIN,
-    };
-    saveUserSession(defaultSuperAdmin);
-    return defaultSuperAdmin;
+    return null;
   });
 
   const handleSetUser = (user: UserAccount | null) => {
