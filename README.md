@@ -1,4 +1,4 @@
-# oxycare-app
+# oxycarelab_app
 
 Oxycare Diagnostics - Department Operations Suite & Laboratory Information System (LIS).
 
