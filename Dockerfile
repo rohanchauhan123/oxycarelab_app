@@ -8,11 +8,11 @@ FROM node:20-bookworm-slim AS builder
 
 WORKDIR /app
 
-# Enable corepack for pnpm
-RUN corepack enable && corepack prepare pnpm@latest --activate
+# Install stable pnpm matching workspace version
+RUN npm install -g pnpm@10.33.3
 
 # Copy package manifests for layer caching
-COPY package.json pnpm-lock.yaml pnpm-workspace.yaml tsconfig.base.json tsconfig.json ./
+COPY package.json pnpm-lock.yaml pnpm-workspace.yaml tsconfig.base.json tsconfig.json .npmrc* ./
 COPY artifacts/api-server/package.json ./artifacts/api-server/
 COPY artifacts/diagnostic-center/package.json ./artifacts/diagnostic-center/
 COPY artifacts/mockup-sandbox/package.json ./artifacts/mockup-sandbox/
@@ -21,7 +21,7 @@ COPY lib/api-zod/package.json ./lib/api-zod/
 COPY lib/db/package.json ./lib/db/
 COPY scripts/package.json ./scripts/
 
-# Install dependencies
+# Install dependencies with approved build scripts
 RUN pnpm install
 
 # Copy source tree

@@ -20,5 +20,10 @@
     "lightningcss-darwin-arm64": "^1.33.0",
     "prettier": "^3.9.6",
     "typescript": "~5.9.3"
+  },
+  "pnpm": {
+    "onlyBuiltDependencies": [
+      "esbuild"
+    ]
   }
 }
