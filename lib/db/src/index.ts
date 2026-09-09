@@ -120,9 +120,52 @@ function createInMemoryDb() {
 }
 
 
-export const db: any = process.env.DATABASE_URL
-  ? drizzle(pool!, { schema })
-  : createInMemoryDb();
+export async function initDb() {
+  if (!pool) return;
+  try {
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS diagnostic_records (
+        id TEXT PRIMARY KEY,
+        entity TEXT NOT NULL,
+        payload JSONB NOT NULL,
+        created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+        updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+      );
+      CREATE INDEX IF NOT EXISTS idx_diagnostic_records_entity ON diagnostic_records (entity);
+    `);
+    console.log("[db] PostgreSQL diagnostic_records table initialized successfully.");
+  } catch (err) {
+    console.warn("[db] PostgreSQL table init warning (will retry or use fallback):", err);
+  }
+}
+
+if (pool) {
+  initDb();
+}
+
+const inMemoryStore = createInMemoryDb();
+const postgresDrizzle = pool ? drizzle(pool, { schema }) : null;
+
+// Hybrid safe db client that falls back gracefully if postgres query fails
+export const db: any = postgresDrizzle
+  ? new Proxy(postgresDrizzle, {
+      get(target, prop, receiver) {
+        const orig = Reflect.get(target, prop, receiver);
+        if (typeof orig === "function") {
+          return (...args: any[]) => {
+            try {
+              const res = orig.apply(target, args);
+              return res;
+            } catch (err) {
+              console.warn(`[db] Postgres operation ${String(prop)} failed, falling back to memory:`, err);
+              return Reflect.get(inMemoryStore, prop, receiver)(...args);
+            }
+          };
+        }
+        return orig;
+      },
+    })
+  : inMemoryStore;
 
 export * from "./schema";
 

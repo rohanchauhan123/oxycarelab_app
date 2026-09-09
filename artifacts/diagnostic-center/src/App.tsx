@@ -5402,7 +5402,7 @@ function LoginPage({ onLoginSuccess }: { onLoginSuccess: (user: UserAccount) => 
         <div className="mt-8">
           <h1 className="text-2xl font-bold tracking-[-.04em]">Sign in to Console</h1>
           <p className="mt-1 text-xs text-muted-foreground leading-relaxed">
-            Enter your Oxycare staff credentials. Super Admin: <strong className="text-foreground font-semibold">Dushyant pandat</strong>
+            Enter your Oxycare credentials to access the department console.
           </p>
         </div>
 
@@ -5412,7 +5412,7 @@ function LoginPage({ onLoginSuccess }: { onLoginSuccess: (user: UserAccount) => 
               type="text"
               value={email}
               onChange={(e) => setEmail(e.target.value)}
-              placeholder="dushyant@oxycare.in"
+              placeholder="user@oxycare.in"
               required
             />
           </Field>
@@ -5425,11 +5425,6 @@ function LoginPage({ onLoginSuccess }: { onLoginSuccess: (user: UserAccount) => 
               required
             />
           </Field>
-        </div>
-
-        <div className="mt-4 rounded-xl border border-primary/20 bg-primary/5 p-3 text-[11px] text-muted-foreground flex items-center gap-2">
-          <CheckCircle2 size={15} className="text-primary shrink-0" />
-          <span>Super Admin has full access to create Doctors, Agents, Frontdesk, and Staff accounts.</span>
         </div>
 
         <Button type="submit" disabled={loading} className="mt-6 w-full font-bold h-11">
