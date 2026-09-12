@@ -2870,84 +2870,172 @@ function NewAppointment({ currentUser }: { currentUser: UserAccount }) {
   const [partnerLabs, setPartnerLabs] = useState<PartnerLab[]>([]);
   const [selectedLabId, setSelectedLabId] = useState('');
   const [labSearch, setLabSearch] = useState('');
+  const [isChangingLab, setIsChangingLab] = useState(false);
 
   useEffect(() => {
     fetch('/api/patients').then((r) => r.json()).then(setPatients);
     fetch('/api/partner-labs').then((r) => r.json()).then((labs: PartnerLab[]) => {
       setPartnerLabs(labs);
-      if (labs.length > 0) {
-        const firstLab = labs[0];
-        setSelectedLabId(firstLab.id);
-        if (Array.isArray(firstLab.tests) && firstLab.tests.length > 0) {
-          const firstTest = firstLab.tests[0];
-          setSelectedTests([{
-            testId: firstTest.id,
-            testCode: firstTest.testCode || 'TEST-01',
-            testName: firstTest.name,
-            price: Number(firstTest.price),
-            partnerShare: Number(firstTest.partnerShare || 0),
-            agentIncentive: Number(firstTest.agentIncentive || 0),
-            instructions: firstTest.instructions || 'Standard preparation',
-            parameters: Array.isArray(firstTest.parameters) ? firstTest.parameters : [],
-            quantity: 1,
-            lineTotal: Number(firstTest.price),
-          }]);
-        }
-      }
     });
     fetch('/api/tests').then((r) => r.json()).then((data: Test[]) => {
       setTests(data);
+      if (data.length > 0) {
+        const first = data[0] as any;
+        setSelectedTests([{
+          testId: first.id,
+          testCode: first.testCode || 'TEST-01',
+          testName: first.name,
+          price: Number(first.price),
+          partnerShare: Number(first.partnerShare || 0),
+          agentIncentive: Number(first.agentIncentive || 0),
+          instructions: first.instructions || 'Standard preparation',
+          parameters: Array.isArray(first.parameters) ? first.parameters : [],
+          quantity: 1,
+          lineTotal: Number(first.price),
+        }]);
+      }
     });
     fetch('/api/doctors').then((r) => r.json()).then(setDoctors);
   }, []);
 
+  // Auto-select initial partner lab conducting the selected test
+  useEffect(() => {
+    if (!selectedLabId && partnerLabs.length > 0 && selectedTests.length > 0) {
+      const firstTest = selectedTests[0];
+      const match = partnerLabs.find((l) =>
+        (l.tests || []).some(
+          (lt) =>
+            lt.id === firstTest.testId ||
+            (lt.testCode && lt.testCode.toLowerCase() === (firstTest.testCode || '').toLowerCase()) ||
+            lt.name.toLowerCase() === firstTest.testName.toLowerCase()
+        )
+      );
+      if (match) {
+        setSelectedLabId(match.id);
+      } else {
+        setSelectedLabId(partnerLabs[0].id);
+      }
+    }
+  }, [partnerLabs, selectedTests, selectedLabId]);
+
   const selectedLab = useMemo(() => partnerLabs.find((l) => l.id === selectedLabId), [partnerLabs, selectedLabId]);
 
-  const filteredLabs = useMemo(() => {
-    if (!labSearch) return partnerLabs;
-    const q = labSearch.toLowerCase();
-    return partnerLabs.filter((l) =>
-      [l.name, l.address, l.city, l.phone, l.contactPerson].some((v) => String(v || '').toLowerCase().includes(q))
+  // All tests available across center master catalogue and partner labs
+  const allAvailableTests = useMemo(() => {
+    const list: any[] = [...tests];
+    partnerLabs.forEach((lab) => {
+      (lab.tests || []).forEach((lt) => {
+        const alreadyExists = list.some(
+          (t) =>
+            t.id === lt.id ||
+            (t.testCode && t.testCode.toLowerCase() === (lt.testCode || '').toLowerCase()) ||
+            t.name.toLowerCase() === lt.name.toLowerCase()
+        );
+        if (!alreadyExists) {
+          list.push({
+            id: lt.id,
+            name: lt.name,
+            testCode: lt.testCode,
+            department: lt.category || lt.department || 'Pathology',
+            price: lt.price,
+            partnerShare: lt.partnerShare || 0,
+            agentIncentive: lt.agentIncentive || 0,
+            instructions: lt.instructions || 'Standard preparation',
+            parameters: lt.parameters || [],
+          });
+        }
+      });
+    });
+    return list;
+  }, [tests, partnerLabs]);
+
+  // Filtered available tests for search dropdown
+  const filteredTests = useMemo(() => {
+    if (!testSearch) return allAvailableTests;
+    const q = testSearch.toLowerCase();
+    return allAvailableTests.filter((t: any) =>
+      [t.name, t.shortName, t.testCode, t.department].some((v) => String(v || '').toLowerCase().includes(q))
     );
-  }, [partnerLabs, labSearch]);
+  }, [allAvailableTests, testSearch]);
+
+  // Eligible partner labs filtered by tests selected in cart
+  const eligibleLabs = useMemo(() => {
+    if (selectedTests.length === 0) return [];
+    const q = labSearch.toLowerCase().trim();
+
+    return partnerLabs
+      .map((lab) => {
+        const labTests = lab.tests || [];
+        let matchCount = 0;
+
+        for (const st of selectedTests) {
+          const stName = st.testName.toLowerCase().trim();
+          const stCode = (st.testCode || '').toLowerCase().trim();
+          const matches = labTests.some((lt) => {
+            const ltName = lt.name.toLowerCase().trim();
+            const ltCode = (lt.testCode || '').toLowerCase().trim();
+            return (
+              lt.id === st.testId ||
+              (ltCode && ltCode === stCode) ||
+              ltName === stName ||
+              ltName.includes(stName) ||
+              stName.includes(ltName)
+            );
+          });
+          if (matches) matchCount++;
+        }
+
+        const conductsAll = matchCount === selectedTests.length;
+        const conductsSome = matchCount > 0;
+
+        return {
+          lab,
+          matchCount,
+          conductsAll,
+          conductsSome,
+        };
+      })
+      .filter(({ lab }) => {
+        if (q) {
+          return [lab.name, lab.address, lab.city, lab.contactPerson].some((v) =>
+            String(v || '').toLowerCase().includes(q)
+          );
+        }
+        return true;
+      })
+      .sort((a, b) => {
+        if (a.conductsAll && !b.conductsAll) return -1;
+        if (!a.conductsAll && b.conductsAll) return 1;
+        return b.matchCount - a.matchCount;
+      });
+  }, [partnerLabs, selectedTests, labSearch]);
 
   const handleSelectLab = (lab: PartnerLab) => {
     setSelectedLabId(lab.id);
     setLabSearch('');
+    setIsChangingLab(false);
+    // Sync partnerShare if the selected lab defines specific custom rates
     if (Array.isArray(lab.tests) && lab.tests.length > 0) {
-      const first = lab.tests[0];
-      setSelectedTests([{
-        testId: first.id,
-        testCode: first.testCode || 'TEST-01',
-        testName: first.name,
-        price: Number(first.price),
-        partnerShare: Number(first.partnerShare || 0),
-        agentIncentive: Number(first.agentIncentive || 0),
-        instructions: first.instructions || 'Standard preparation',
-        parameters: Array.isArray(first.parameters) ? first.parameters : [],
-        quantity: 1,
-        lineTotal: Number(first.price),
-      }]);
-    } else {
-      setSelectedTests([]);
+      setSelectedTests((prev) =>
+        prev.map((item) => {
+          const matchedTest = lab.tests.find(
+            (lt) =>
+              lt.id === item.testId ||
+              (lt.testCode && lt.testCode.toLowerCase() === (item.testCode || '').toLowerCase()) ||
+              lt.name.toLowerCase() === item.testName.toLowerCase()
+          );
+          if (matchedTest) {
+            return {
+              ...item,
+              partnerShare: matchedTest.partnerShare !== undefined ? Number(matchedTest.partnerShare) : item.partnerShare,
+              agentIncentive: matchedTest.agentIncentive !== undefined ? Number(matchedTest.agentIncentive) : item.agentIncentive,
+            };
+          }
+          return item;
+        })
+      );
     }
   };
-
-  const availableLabTests = useMemo(() => {
-    if (selectedLab && Array.isArray(selectedLab.tests) && selectedLab.tests.length > 0) {
-      return selectedLab.tests;
-    }
-    return tests;
-  }, [selectedLab, tests]);
-
-  // Filtered available tests for search dropdown (sourced from selected partner lab)
-  const filteredTests = useMemo(() => {
-    if (!testSearch) return availableLabTests;
-    const q = testSearch.toLowerCase();
-    return availableLabTests.filter((t: any) =>
-      [t.name, t.shortName, t.testCode, t.department, t.category].some((v) => String(v || '').toLowerCase().includes(q))
-    );
-  }, [availableLabTests, testSearch]);
 
   const addTestToCart = (t: any) => {
     setSelectedTests((prev) => {
@@ -3092,109 +3180,6 @@ function NewAppointment({ currentUser }: { currentUser: UserAccount }) {
       <PageTitle eyebrow="Frontdesk & Partner Booking" title="Create Patient Booking" detail="Select single or multiple diagnostic tests/packages, specify partner lab, and snapshot financial rates." />
       <Panel className="max-w-4xl p-6">
         <form onSubmit={handleSubmit} className="space-y-6">
-          {/* Mandatory Partner Lab Selection Card */}
-          <div className="rounded-2xl border-2 border-primary/30 bg-primary/5 p-5 shadow-sm space-y-3.5">
-            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
-              <div className="flex items-center gap-2.5">
-                <div className="grid size-10 place-items-center rounded-xl bg-primary text-primary-foreground shadow-sm">
-                  <Building2 size={20} />
-                </div>
-                <div>
-                  <div className="flex items-center gap-2">
-                    <span className="font-bold text-sm text-foreground">Assigned Partner Laboratory</span>
-                    <span className="mono rounded bg-destructive/15 px-2 py-0.5 text-[9px] font-bold text-destructive">MANDATORY *</span>
-                  </div>
-                  <p className="text-xs text-muted-foreground">Select the partner lab conducting these investigations (tests catalogue updates automatically)</p>
-                </div>
-              </div>
-              {selectedLab ? (
-                <span className="mono flex items-center gap-1 rounded-xl bg-[#e5f5f1] px-3 py-1 text-xs font-bold text-[#167366] border border-[#bce4db] shrink-0">
-                  <CheckCircle2 size={13} /> {selectedLab.name}
-                </span>
-              ) : (
-                <span className="mono flex items-center gap-1 rounded-xl bg-destructive/10 px-3 py-1 text-xs font-bold text-destructive border border-destructive/20 shrink-0">
-                  <AlertTriangle size={13} /> Lab Not Selected
-                </span>
-              )}
-            </div>
-
-            {/* Live Search Input for Partner Lab */}
-            <div className="relative">
-              <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground" size={16} />
-              <Input
-                value={labSearch}
-                onChange={(e) => setLabSearch(e.target.value)}
-                placeholder="Search partner lab by name, address, or city (e.g. SRL, Lal PathLabs, Gurugram)..."
-                className="pl-9 bg-card"
-              />
-              {labSearch && (
-                <div className="absolute left-0 right-0 top-full z-30 mt-1 max-h-56 overflow-y-auto rounded-xl border border-border bg-card shadow-2xl p-1.5 space-y-1">
-                  {filteredLabs.length === 0 ? (
-                    <div className="p-3 text-center text-xs text-muted-foreground">No partner labs found matching "{labSearch}"</div>
-                  ) : (
-                    filteredLabs.map((l) => (
-                      <button
-                        key={l.id}
-                        type="button"
-                        onClick={() => handleSelectLab(l)}
-                        className={cx(
-                          'flex w-full items-center justify-between rounded-lg p-2.5 text-left text-xs transition-colors',
-                          selectedLabId === l.id ? 'bg-primary/10 border border-primary/30' : 'hover:bg-muted'
-                        )}
-                      >
-                        <div>
-                          <div className="font-bold text-foreground flex items-center gap-2">
-                            {l.name}
-                            {l.city && <span className="mono text-[10px] rounded bg-muted px-1.5 py-0.2 text-muted-foreground">{l.city}</span>}
-                          </div>
-                          <div className="text-[11px] text-muted-foreground flex items-center gap-1 mt-0.5">
-                            <MapPin size={11} /> {l.address}
-                          </div>
-                        </div>
-                        <div className="text-right shrink-0">
-                          <span className="mono rounded bg-primary/15 px-2 py-0.5 text-[10px] font-bold text-primary">
-                            {l.tests?.length || 0} Tests Conducted
-                          </span>
-                        </div>
-                      </button>
-                    ))
-                  )}
-                </div>
-              )}
-            </div>
-
-            {/* Quick Lab Selection Grid */}
-            <div className="grid gap-2 sm:grid-cols-3 pt-1">
-              {partnerLabs.map((lab) => {
-                const isSelected = selectedLabId === lab.id;
-                return (
-                  <button
-                    key={lab.id}
-                    type="button"
-                    onClick={() => handleSelectLab(lab)}
-                    className={cx(
-                      'flex flex-col items-start p-3 rounded-xl border text-left transition-all',
-                      isSelected
-                        ? 'border-primary bg-card shadow-sm ring-2 ring-primary/40'
-                        : 'border-border bg-card/60 hover:bg-card'
-                    )}
-                  >
-                    <div className="flex items-center justify-between w-full">
-                      <span className={cx('font-bold text-xs line-clamp-1', isSelected ? 'text-primary' : 'text-foreground')}>{lab.name}</span>
-                      {isSelected && <Check size={14} className="text-primary shrink-0 ml-1" />}
-                    </div>
-                    <div className="text-[10px] text-muted-foreground line-clamp-1 mt-1 flex items-center gap-1">
-                      <MapPin size={10} className="shrink-0" /> {lab.address}
-                    </div>
-                    <div className="mono text-[9px] text-primary font-semibold mt-1.5">
-                      🔬 {lab.tests?.length || 0} Tests Conducted
-                    </div>
-                  </button>
-                );
-              })}
-            </div>
-          </div>
-
           {/* Home Collection vs Center Visit Mode Switcher */}
           <div className="rounded-2xl border border-primary/20 bg-primary/5 p-4">
             <div className="flex items-center justify-between">
@@ -3497,6 +3482,131 @@ function NewAppointment({ currentUser }: { currentUser: UserAccount }) {
                 No tests added yet. Search above to add tests to this booking.
               </div>
             )}
+
+            {/* Mandatory Partner Lab Selection (Filtered by tests chosen above) */}
+            <div className="rounded-2xl border border-border bg-card p-4 space-y-3 shadow-xs">
+              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-1.5">
+                <div className="flex items-center gap-2">
+                  <div className="grid size-8 place-items-center rounded-lg bg-primary/10 text-primary shrink-0">
+                    <Building2 size={16} />
+                  </div>
+                  <div>
+                    <div className="flex items-center gap-2">
+                      <span className="font-bold text-xs uppercase tracking-wider text-foreground">Assigned Partner Laboratory</span>
+                      <span className="mono rounded bg-destructive/10 px-1.5 py-0.2 text-[9px] font-bold text-destructive">MANDATORY *</span>
+                    </div>
+                    <p className="text-[11px] text-muted-foreground">Select the outsourced partner laboratory conducting these investigation(s).</p>
+                  </div>
+                </div>
+                {selectedLab && (
+                  <span className="mono flex items-center gap-1 rounded-lg bg-[#e5f5f1] px-2.5 py-1 text-xs font-bold text-[#167366] border border-[#bce4db] w-fit shrink-0">
+                    <CheckCircle2 size={13} /> {selectedLab.name}
+                  </span>
+                )}
+              </div>
+
+              {selectedTests.length === 0 ? (
+                <div className="rounded-xl border border-dashed border-border bg-muted/20 p-3.5 text-center text-xs text-muted-foreground">
+                  🔬 Please select diagnostic test(s) above first. Partner labs offering those tests will automatically appear for selection.
+                </div>
+              ) : selectedLab && !isChangingLab ? (
+                <div className="flex items-center justify-between rounded-xl border border-primary/30 bg-primary/5 p-3 shadow-xs">
+                  <div className="flex items-center gap-3 min-w-0">
+                    <div className="grid size-9 place-items-center rounded-xl bg-primary text-primary-foreground shrink-0 shadow-xs">
+                      <Building2 size={18} />
+                    </div>
+                    <div className="min-w-0">
+                      <div className="flex items-center gap-2 flex-wrap">
+                        <span className="font-bold text-sm text-foreground">{selectedLab.name}</span>
+                        <span className="mono rounded bg-[#e5f5f1] text-[#167366] px-2 py-0.5 text-[10px] font-bold border border-[#bce4db]">
+                          Conducts Selected Tests
+                        </span>
+                      </div>
+                      <div className="text-xs text-muted-foreground flex items-center gap-2 mt-0.5 truncate">
+                        <span>📍 {selectedLab.address}</span>
+                        {selectedLab.city && <span>· {selectedLab.city}</span>}
+                        {selectedLab.phone && <span>· 📞 {selectedLab.phone}</span>}
+                      </div>
+                    </div>
+                  </div>
+                  <Button
+                    type="button"
+                    variant="secondary"
+                    className="h-8 text-xs font-semibold gap-1 shrink-0 ml-3 bg-card hover:bg-muted"
+                    onClick={() => { setIsChangingLab(true); setLabSearch(''); }}
+                  >
+                    <Edit3 size={13} /> Change Lab
+                  </Button>
+                </div>
+              ) : (
+                <div className="relative">
+                  <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground" size={16} />
+                  <Input
+                    value={labSearch}
+                    onChange={(e) => setLabSearch(e.target.value)}
+                    placeholder={`Search partner labs offering ${selectedTests.map(t => t.testName).slice(0, 2).join(', ')}...`}
+                    className="pl-9 bg-card"
+                    autoFocus={isChangingLab}
+                  />
+                  {/* Autocomplete Dropdown */}
+                  <div className="mt-1.5 max-h-56 overflow-y-auto rounded-xl border border-border bg-card shadow-2xl p-1.5 space-y-1">
+                    {eligibleLabs.length === 0 ? (
+                      <div className="p-4 text-center text-xs text-muted-foreground">
+                        No partner labs found matching "{labSearch}".
+                      </div>
+                    ) : (
+                      eligibleLabs.map(({ lab, conductsAll, matchCount }) => (
+                        <button
+                          key={lab.id}
+                          type="button"
+                          onClick={() => handleSelectLab(lab)}
+                          className={cx(
+                            'flex w-full items-center justify-between rounded-lg p-2.5 text-left text-xs transition-colors hover:bg-muted/70 cursor-pointer',
+                            selectedLabId === lab.id ? 'bg-primary/10 border border-primary/30' : ''
+                          )}
+                        >
+                          <div>
+                            <div className="font-bold text-foreground flex items-center gap-2">
+                              {lab.name}
+                              {lab.city && <span className="mono text-[10px] rounded bg-muted px-1.5 py-0.2 text-muted-foreground">{lab.city}</span>}
+                            </div>
+                            <div className="text-[11px] text-muted-foreground flex items-center gap-1 mt-0.5">
+                              <MapPin size={11} className="shrink-0" /> {lab.address}
+                            </div>
+                          </div>
+                          <div className="text-right shrink-0">
+                            {conductsAll ? (
+                              <span className="mono rounded bg-[#e5f5f1] text-[#167366] border border-[#bce4db] px-2 py-0.5 text-[10px] font-bold">
+                                ✓ Offers All Tests
+                              </span>
+                            ) : matchCount > 0 ? (
+                              <span className="mono rounded bg-amber-100 text-amber-800 border border-amber-300 px-2 py-0.5 text-[10px] font-bold">
+                                Offers {matchCount}/{selectedTests.length} Tests
+                              </span>
+                            ) : (
+                              <span className="mono rounded bg-muted text-muted-foreground px-2 py-0.5 text-[10px]">
+                                Partner Lab
+                              </span>
+                            )}
+                          </div>
+                        </button>
+                      ))
+                    )}
+                  </div>
+                  {isChangingLab && selectedLab && (
+                    <div className="mt-1.5 flex justify-end">
+                      <button
+                        type="button"
+                        onClick={() => setIsChangingLab(false)}
+                        className="text-xs text-muted-foreground hover:text-foreground font-semibold hover:underline"
+                      >
+                        Keep current lab ({selectedLab.name})
+                      </button>
+                    </div>
+                  )}
+                </div>
+              )}
+            </div>
 
             {/* Financial Summary Card */}
             <div className="rounded-2xl border border-border bg-muted/30 p-4 space-y-4">
