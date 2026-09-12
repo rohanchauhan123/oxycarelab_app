@@ -14,7 +14,7 @@ function findEntityAndId(condition: any): { entity?: string; id?: string } {
   const knownEntities = new Set([
     "appointment", "patient", "test", "package", "slot", "doctor", "agent",
     "branch", "lab", "activity", "user", "payment", "report", "whatsapp_template",
-    "whatsapp_log", "audit_log", "doctor_price", "ledger", "notification"
+    "whatsapp_log", "audit_log", "doctor_price", "ledger", "notification", "partner_lab"
   ]);
   let entity: string | undefined;
   let id: string | undefined;
@@ -40,7 +40,8 @@ function findEntityAndId(condition: any): { entity?: string; id?: string } {
         obj.startsWith("aud-") ||
         obj.startsWith("dp-") ||
         obj.startsWith("led-") ||
-        obj.startsWith("notif-")
+        obj.startsWith("notif-") ||
+        obj.startsWith("plab-")
       ) {
         id = obj;
       }

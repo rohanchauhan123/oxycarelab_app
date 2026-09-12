@@ -10,7 +10,7 @@ import {
   UserRound, UsersRound, WalletCards, X, XCircle, Shield, Package, Clock,
   MessageSquare, History, UserCheck, Tag, Upload, Edit3, Info, Eye, Download,
   ArrowLeft, FileCheck, DollarSign, Home, MapPin, Truck, Trash2, Filter, AlertTriangle, Send,
-  Building2, CreditCard, HandCoins
+  Building2, CreditCard, HandCoins, Mail
 } from 'lucide-react';
 import {
   getGetDashboardSummaryQueryKey, getListAppointmentsQueryKey, getListPatientsQueryKey,
@@ -51,6 +51,37 @@ interface TestParameter {
   normalRange?: string;
 }
 
+interface PartnerLabTest {
+  id: string;
+  name: string;
+  testCode: string;
+  category?: string;
+  department?: string;
+  price: number;
+  b2bCost?: number;
+  partnerShare: number;
+  agentIncentive: number;
+  turnaround?: string;
+  sampleType?: string;
+  instructions?: string;
+  parameters?: TestParameter[];
+  active?: boolean;
+}
+
+interface PartnerLab {
+  id: string;
+  name: string;
+  address: string;
+  city?: string;
+  phone?: string;
+  email?: string;
+  contactPerson?: string;
+  active?: boolean;
+  tests: PartnerLabTest[];
+  createdAt?: string;
+  updatedAt?: string;
+}
+
 interface ExtendedAppointment {
   id: string;
   patientId: string;
@@ -61,6 +92,9 @@ interface ExtendedAppointment {
   testName: string;
   lab: string;
   branch: string;
+  partnerLabId?: string;
+  partnerLabName?: string;
+  partnerLabAddress?: string;
   date: string;
   time: string;
   doctor?: string | null;
@@ -200,6 +234,7 @@ const navItems = [
   { href: '/', label: 'Overview', icon: LayoutDashboard, roles: ['SUPER_ADMIN', 'ADMIN', 'FRONTDESK', 'AGENT', 'DOCTOR'] },
   { href: '/appointments', label: 'Appointments Queue', icon: CalendarDays, roles: ['SUPER_ADMIN', 'ADMIN', 'FRONTDESK', 'AGENT', 'DOCTOR'] },
   { href: '/slots', label: 'Slots & Capacity', icon: Clock, roles: ['SUPER_ADMIN', 'ADMIN', 'FRONTDESK'] },
+  { href: '/partner-labs', label: 'Partner Labs', icon: Building2, roles: ['SUPER_ADMIN', 'ADMIN', 'FRONTDESK'] },
   { href: '/doctor-dashboard', label: 'Doctor Ledger', icon: ReceiptText, roles: ['SUPER_ADMIN', 'ADMIN', 'DOCTOR'] },
   { href: '/referral-portal', label: 'Agent Ledger', icon: WalletCards, roles: ['SUPER_ADMIN', 'ADMIN', 'AGENT'] },
   { href: '/patients', label: 'Patients Master', icon: UsersRound, roles: ['SUPER_ADMIN', 'ADMIN', 'FRONTDESK', 'AGENT', 'DOCTOR'] },
@@ -1376,7 +1411,9 @@ function AppointmentRow({ appointment, compact = false, onChange, canChangeStatu
 
         <div className="w-[150px] shrink-0">
           <div className="text-xs font-medium truncate">{appointment.testName}</div>
-          <div className="mt-0.5 text-[10px] text-muted-foreground">{appointment.items?.length ? `${appointment.items.length} tests included` : (appointment.lab || appointment.branch)}</div>
+          <div className="mt-0.5 text-[10px] text-muted-foreground truncate" title={appointment.partnerLabName || appointment.lab}>
+            {appointment.partnerLabName ? `🏥 ${appointment.partnerLabName}` : (appointment.items?.length ? `${appointment.items.length} tests included` : (appointment.lab || appointment.branch))}
+          </div>
         </div>
 
         <div className="w-[130px] shrink-0 text-xs">
@@ -1593,7 +1630,8 @@ function AppointmentDetailPage({ params, currentUser }: { params: { id: string }
               <div className="text-right">
                 <div className="text-xs font-semibold text-muted-foreground">Test Investigation</div>
                 <div className="text-lg font-bold text-primary">{apt.testName}</div>
-                <div className="text-xs text-muted-foreground mt-0.5">{apt.lab || apt.branch}</div>
+                <div className="text-xs font-semibold text-foreground mt-0.5">{apt.partnerLabName ? `Partner Lab: ${apt.partnerLabName}` : (apt.lab || apt.branch)}</div>
+                {apt.partnerLabAddress && <div className="text-[11px] text-muted-foreground">{apt.partnerLabAddress}</div>}
               </div>
             </div>
 
@@ -2828,37 +2866,88 @@ function NewAppointment({ currentUser }: { currentUser: UserAccount }) {
   const [notes, setNotes] = useState('');
   const [submitting, setSubmitting] = useState(false);
 
+  // Mandatory Partner Lab Selection State
+  const [partnerLabs, setPartnerLabs] = useState<PartnerLab[]>([]);
+  const [selectedLabId, setSelectedLabId] = useState('');
+  const [labSearch, setLabSearch] = useState('');
+
   useEffect(() => {
     fetch('/api/patients').then((r) => r.json()).then(setPatients);
+    fetch('/api/partner-labs').then((r) => r.json()).then((labs: PartnerLab[]) => {
+      setPartnerLabs(labs);
+      if (labs.length > 0) {
+        const firstLab = labs[0];
+        setSelectedLabId(firstLab.id);
+        if (Array.isArray(firstLab.tests) && firstLab.tests.length > 0) {
+          const firstTest = firstLab.tests[0];
+          setSelectedTests([{
+            testId: firstTest.id,
+            testCode: firstTest.testCode || 'TEST-01',
+            testName: firstTest.name,
+            price: Number(firstTest.price),
+            partnerShare: Number(firstTest.partnerShare || 0),
+            agentIncentive: Number(firstTest.agentIncentive || 0),
+            instructions: firstTest.instructions || 'Standard preparation',
+            parameters: Array.isArray(firstTest.parameters) ? firstTest.parameters : [],
+            quantity: 1,
+            lineTotal: Number(firstTest.price),
+          }]);
+        }
+      }
+    });
     fetch('/api/tests').then((r) => r.json()).then((data: Test[]) => {
       setTests(data);
-      if (data.length > 0) {
-        const first = data[0] as any;
-        setSelectedTests([{
-          testId: first.id,
-          testCode: first.testCode || 'TEST-01',
-          testName: first.name,
-          price: Number(first.price),
-          partnerShare: Number(first.partnerShare || 0),
-          agentIncentive: Number(first.agentIncentive || 0),
-          instructions: first.instructions || 'No special preparation',
-          parameters: Array.isArray(first.parameters) ? first.parameters : [],
-          quantity: 1,
-          lineTotal: Number(first.price),
-        }]);
-      }
     });
     fetch('/api/doctors').then((r) => r.json()).then(setDoctors);
   }, []);
 
-  // Filtered available tests for search dropdown
-  const filteredTests = useMemo(() => {
-    if (!testSearch) return tests;
-    const q = testSearch.toLowerCase();
-    return tests.filter((t: any) =>
-      [t.name, t.shortName, t.testCode, t.department].some((v) => String(v || '').toLowerCase().includes(q))
+  const selectedLab = useMemo(() => partnerLabs.find((l) => l.id === selectedLabId), [partnerLabs, selectedLabId]);
+
+  const filteredLabs = useMemo(() => {
+    if (!labSearch) return partnerLabs;
+    const q = labSearch.toLowerCase();
+    return partnerLabs.filter((l) =>
+      [l.name, l.address, l.city, l.phone, l.contactPerson].some((v) => String(v || '').toLowerCase().includes(q))
     );
-  }, [tests, testSearch]);
+  }, [partnerLabs, labSearch]);
+
+  const handleSelectLab = (lab: PartnerLab) => {
+    setSelectedLabId(lab.id);
+    setLabSearch('');
+    if (Array.isArray(lab.tests) && lab.tests.length > 0) {
+      const first = lab.tests[0];
+      setSelectedTests([{
+        testId: first.id,
+        testCode: first.testCode || 'TEST-01',
+        testName: first.name,
+        price: Number(first.price),
+        partnerShare: Number(first.partnerShare || 0),
+        agentIncentive: Number(first.agentIncentive || 0),
+        instructions: first.instructions || 'Standard preparation',
+        parameters: Array.isArray(first.parameters) ? first.parameters : [],
+        quantity: 1,
+        lineTotal: Number(first.price),
+      }]);
+    } else {
+      setSelectedTests([]);
+    }
+  };
+
+  const availableLabTests = useMemo(() => {
+    if (selectedLab && Array.isArray(selectedLab.tests) && selectedLab.tests.length > 0) {
+      return selectedLab.tests;
+    }
+    return tests;
+  }, [selectedLab, tests]);
+
+  // Filtered available tests for search dropdown (sourced from selected partner lab)
+  const filteredTests = useMemo(() => {
+    if (!testSearch) return availableLabTests;
+    const q = testSearch.toLowerCase();
+    return availableLabTests.filter((t: any) =>
+      [t.name, t.shortName, t.testCode, t.department, t.category].some((v) => String(v || '').toLowerCase().includes(q))
+    );
+  }, [availableLabTests, testSearch]);
 
   const addTestToCart = (t: any) => {
     setSelectedTests((prev) => {
@@ -2920,6 +3009,10 @@ function NewAppointment({ currentUser }: { currentUser: UserAccount }) {
   const handleSubmit = async (e: FormEvent) => {
     e.preventDefault();
 
+    if (!selectedLabId || !selectedLab) {
+      toast.error('Partner Lab selection is mandatory. Please select a partner lab.');
+      return;
+    }
     if (patientMode === 'registered' && !patientId) {
       toast.error('Please select a registered patient.'); return;
     }
@@ -2936,6 +3029,9 @@ function NewAppointment({ currentUser }: { currentUser: UserAccount }) {
     setSubmitting(true);
     try {
       const payload: any = {
+        partnerLabId: selectedLab.id,
+        partnerLabName: selectedLab.name,
+        partnerLabAddress: selectedLab.address,
         items: selectedTests,
         slotId: slotId || 'slot-cbc-1100',
         date: selectedSlot?.date || bookingDate,
@@ -2993,9 +3089,112 @@ function NewAppointment({ currentUser }: { currentUser: UserAccount }) {
 
   return (
     <>
-      <PageTitle eyebrow="Frontdesk & Partner Booking" title="Create Patient Booking" detail="Select single or multiple diagnostic tests/packages, specify home collection if required, and snapshot financial rates." />
+      <PageTitle eyebrow="Frontdesk & Partner Booking" title="Create Patient Booking" detail="Select single or multiple diagnostic tests/packages, specify partner lab, and snapshot financial rates." />
       <Panel className="max-w-4xl p-6">
         <form onSubmit={handleSubmit} className="space-y-6">
+          {/* Mandatory Partner Lab Selection Card */}
+          <div className="rounded-2xl border-2 border-primary/30 bg-primary/5 p-5 shadow-sm space-y-3.5">
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+              <div className="flex items-center gap-2.5">
+                <div className="grid size-10 place-items-center rounded-xl bg-primary text-primary-foreground shadow-sm">
+                  <Building2 size={20} />
+                </div>
+                <div>
+                  <div className="flex items-center gap-2">
+                    <span className="font-bold text-sm text-foreground">Assigned Partner Laboratory</span>
+                    <span className="mono rounded bg-destructive/15 px-2 py-0.5 text-[9px] font-bold text-destructive">MANDATORY *</span>
+                  </div>
+                  <p className="text-xs text-muted-foreground">Select the partner lab conducting these investigations (tests catalogue updates automatically)</p>
+                </div>
+              </div>
+              {selectedLab ? (
+                <span className="mono flex items-center gap-1 rounded-xl bg-[#e5f5f1] px-3 py-1 text-xs font-bold text-[#167366] border border-[#bce4db] shrink-0">
+                  <CheckCircle2 size={13} /> {selectedLab.name}
+                </span>
+              ) : (
+                <span className="mono flex items-center gap-1 rounded-xl bg-destructive/10 px-3 py-1 text-xs font-bold text-destructive border border-destructive/20 shrink-0">
+                  <AlertTriangle size={13} /> Lab Not Selected
+                </span>
+              )}
+            </div>
+
+            {/* Live Search Input for Partner Lab */}
+            <div className="relative">
+              <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground" size={16} />
+              <Input
+                value={labSearch}
+                onChange={(e) => setLabSearch(e.target.value)}
+                placeholder="Search partner lab by name, address, or city (e.g. SRL, Lal PathLabs, Gurugram)..."
+                className="pl-9 bg-card"
+              />
+              {labSearch && (
+                <div className="absolute left-0 right-0 top-full z-30 mt-1 max-h-56 overflow-y-auto rounded-xl border border-border bg-card shadow-2xl p-1.5 space-y-1">
+                  {filteredLabs.length === 0 ? (
+                    <div className="p-3 text-center text-xs text-muted-foreground">No partner labs found matching "{labSearch}"</div>
+                  ) : (
+                    filteredLabs.map((l) => (
+                      <button
+                        key={l.id}
+                        type="button"
+                        onClick={() => handleSelectLab(l)}
+                        className={cx(
+                          'flex w-full items-center justify-between rounded-lg p-2.5 text-left text-xs transition-colors',
+                          selectedLabId === l.id ? 'bg-primary/10 border border-primary/30' : 'hover:bg-muted'
+                        )}
+                      >
+                        <div>
+                          <div className="font-bold text-foreground flex items-center gap-2">
+                            {l.name}
+                            {l.city && <span className="mono text-[10px] rounded bg-muted px-1.5 py-0.2 text-muted-foreground">{l.city}</span>}
+                          </div>
+                          <div className="text-[11px] text-muted-foreground flex items-center gap-1 mt-0.5">
+                            <MapPin size={11} /> {l.address}
+                          </div>
+                        </div>
+                        <div className="text-right shrink-0">
+                          <span className="mono rounded bg-primary/15 px-2 py-0.5 text-[10px] font-bold text-primary">
+                            {l.tests?.length || 0} Tests Conducted
+                          </span>
+                        </div>
+                      </button>
+                    ))
+                  )}
+                </div>
+              )}
+            </div>
+
+            {/* Quick Lab Selection Grid */}
+            <div className="grid gap-2 sm:grid-cols-3 pt-1">
+              {partnerLabs.map((lab) => {
+                const isSelected = selectedLabId === lab.id;
+                return (
+                  <button
+                    key={lab.id}
+                    type="button"
+                    onClick={() => handleSelectLab(lab)}
+                    className={cx(
+                      'flex flex-col items-start p-3 rounded-xl border text-left transition-all',
+                      isSelected
+                        ? 'border-primary bg-card shadow-sm ring-2 ring-primary/40'
+                        : 'border-border bg-card/60 hover:bg-card'
+                    )}
+                  >
+                    <div className="flex items-center justify-between w-full">
+                      <span className={cx('font-bold text-xs line-clamp-1', isSelected ? 'text-primary' : 'text-foreground')}>{lab.name}</span>
+                      {isSelected && <Check size={14} className="text-primary shrink-0 ml-1" />}
+                    </div>
+                    <div className="text-[10px] text-muted-foreground line-clamp-1 mt-1 flex items-center gap-1">
+                      <MapPin size={10} className="shrink-0" /> {lab.address}
+                    </div>
+                    <div className="mono text-[9px] text-primary font-semibold mt-1.5">
+                      🔬 {lab.tests?.length || 0} Tests Conducted
+                    </div>
+                  </button>
+                );
+              })}
+            </div>
+          </div>
+
           {/* Home Collection vs Center Visit Mode Switcher */}
           <div className="rounded-2xl border border-primary/20 bg-primary/5 p-4">
             <div className="flex items-center justify-between">
@@ -3159,7 +3358,9 @@ function NewAppointment({ currentUser }: { currentUser: UserAccount }) {
             <div className="flex items-center justify-between">
               <div>
                 <h3 className="font-bold text-base text-foreground">Select Multiple Tests & Packages</h3>
-                <p className="text-xs text-muted-foreground">Search and add multiple diagnostic investigations to a single booking.</p>
+                <p className="text-xs text-muted-foreground">
+                  {selectedLab ? `Available test catalogue conducted by ${selectedLab.name}` : 'Search and add multiple diagnostic investigations to a single booking.'}
+                </p>
               </div>
               <span className="mono rounded bg-primary/10 px-2.5 py-1 text-xs font-bold text-primary">{selectedTests.length} Tests Selected</span>
             </div>
@@ -3170,7 +3371,7 @@ function NewAppointment({ currentUser }: { currentUser: UserAccount }) {
               <Input
                 value={testSearch}
                 onChange={(e) => setTestSearch(e.target.value)}
-                placeholder="Search test by name, test code (e.g. CBC-01), department..."
+                placeholder={selectedLab ? `Search tests in ${selectedLab.name} (e.g. CBC, Lipid, Thyroid)...` : "Search test by name, test code (e.g. CBC-01), department..."}
                 className="pl-9"
               />
               {testSearch && (
@@ -3856,7 +4057,7 @@ function UserAccounts({ currentUser }: { currentUser: UserAccount }) {
   const isAdmin = currentUser.role === 'ADMIN' || currentUser.role === 'SUPER_ADMIN';
   const categories = ['Clinical & Bookings', 'Financials & Ledgers', 'Administrative & Security'] as const;
 
-  const UserFormFields = () => (
+  const renderUserFormFields = () => (
     <div className="grid gap-4 sm:grid-cols-2">
       <Field label="Full Name *"><Input value={name} onChange={(e) => setName(e.target.value)} placeholder="e.g. Dr. Kavita Rao" required /></Field>
       <Field label="Email / System Login ID *"><Input type="email" value={email} onChange={(e) => setEmail(e.target.value)} placeholder="user@oxycare.in" required /></Field>
@@ -3891,7 +4092,7 @@ function UserAccounts({ currentUser }: { currentUser: UserAccount }) {
     </div>
   );
 
-  const PermissionMatrix = () => (
+  const renderPermissionMatrix = () => (
     <div className="border-t border-border pt-5">
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 mb-4">
         <div>
@@ -3958,35 +4159,34 @@ function UserAccounts({ currentUser }: { currentUser: UserAccount }) {
               <thead className="bg-muted/45 text-[10px] uppercase tracking-[.12em] text-muted-foreground">
                 <tr>
                   <th className="px-5 py-3 font-bold">User Name & Profile</th>
-                  <th className="px-4 py-3 font-bold">Contact / Login</th>
-                  <th className="px-4 py-3 font-bold">Role & Branch</th>
-                  <th className="px-4 py-3 font-bold">Granted Access Rights</th>
+                  <th className="px-4 py-3 font-bold">Role & Permissions</th>
                   <th className="px-4 py-3 font-bold">Status</th>
                   {isAdmin && <th className="px-4 py-3 font-bold">Actions</th>}
                 </tr>
               </thead>
-              <tbody className="divide-y divide-border">
+              <tbody className="divide-y divide-border text-xs font-medium">
                 {filteredUsers.map((u) => (
-                  <tr key={u.id} className="hover:bg-muted/35 transition-colors">
+                  <tr key={u.id} className="hover:bg-muted/30 transition-colors">
                     <td className="px-5 py-4">
                       <div className="flex items-center gap-3">
-                        <div className="grid size-10 place-items-center rounded-full bg-primary/10 text-xs font-bold text-primary">{initials(u.name)}</div>
+                        <div className="grid size-9 place-items-center rounded-full bg-primary/10 text-primary font-bold">
+                          {initials(u.name)}
+                        </div>
                         <div>
-                          <div className="text-sm font-bold text-foreground">{u.name}</div>
-                          <div className="text-xs text-muted-foreground">{u.designation || u.role}</div>
+                          <div className="font-bold text-foreground text-sm flex items-center gap-2">
+                            {u.name}
+                            {u.role === 'SUPER_ADMIN' && <span className="mono rounded bg-primary/20 px-1.5 py-0.2 text-[9px] text-primary">Super Admin</span>}
+                          </div>
+                          <div className="mono text-[11px] text-muted-foreground">{u.email} · {u.mobile || 'No Mobile'}</div>
+                          <div className="text-[10px] text-muted-foreground">{u.designation || u.role} · {u.branch || 'All Branches'}</div>
                         </div>
                       </div>
                     </td>
-                    <td className="px-4 py-4 text-xs font-medium">
-                      <div>{u.email}</div>
-                      <div className="mono text-[10px] text-muted-foreground mt-0.5">{u.mobile || 'No phone'}</div>
-                    </td>
-                    <td className="px-4 py-4">
-                      <span className="mono rounded-lg bg-primary/10 px-2 py-1 text-xs font-bold text-primary block w-fit">{u.role}</span>
-                      <span className="text-[10px] text-muted-foreground mt-1 block">{u.branch || 'Indiranagar'}</span>
-                    </td>
-                    <td className="px-4 py-4 text-xs">
-                      <div className="flex flex-wrap gap-1 max-w-xs">
+                    <td className="px-4 py-4 max-w-xs">
+                      <div className="flex items-center gap-1.5 flex-wrap">
+                        <span className="rounded-lg bg-primary/10 px-2 py-0.5 text-[11px] font-bold text-primary">
+                          {u.role}
+                        </span>
                         {(u.permissions || ROLE_DEFAULT_PERMISSIONS[u.role] || []).map((p) => (
                           <button key={p} type="button" onClick={() => toggleUserPerm(u, p)} className="rounded bg-muted hover:bg-muted/80 px-2 py-0.5 text-[10px] font-medium text-foreground border border-border" title="Click to toggle permission">
                             {p.replace(/_/g, ' ')}
@@ -4040,8 +4240,8 @@ function UserAccounts({ currentUser }: { currentUser: UserAccount }) {
         </div>
         <form onSubmit={handleCreate} className="flex flex-col min-h-0 flex-1 overflow-hidden">
           <div className="flex-1 overflow-y-auto p-6 scrollbar-thin space-y-6">
-            <UserFormFields />
-            <PermissionMatrix />
+            {renderUserFormFields()}
+            {renderPermissionMatrix()}
           </div>
           <div className="flex shrink-0 justify-end gap-3 border-t border-border bg-muted/20 px-6 py-4">
             <Button type="button" variant="secondary" onClick={() => setShowAdd(false)}>Cancel</Button>
@@ -4061,8 +4261,8 @@ function UserAccounts({ currentUser }: { currentUser: UserAccount }) {
         </div>
         <form onSubmit={handleEdit} className="flex flex-col min-h-0 flex-1 overflow-hidden">
           <div className="flex-1 overflow-y-auto p-6 scrollbar-thin space-y-6">
-            <UserFormFields />
-            <PermissionMatrix />
+            {renderUserFormFields()}
+            {renderPermissionMatrix()}
           </div>
           <div className="flex shrink-0 justify-end gap-3 border-t border-border bg-muted/20 px-6 py-4">
             <Button type="button" variant="secondary" onClick={() => setEditUser(null)}>Cancel</Button>
@@ -4089,6 +4289,887 @@ function UserAccounts({ currentUser }: { currentUser: UserAccount }) {
               <Button type="button" variant="secondary" onClick={() => setDeleteUser(null)}>Cancel</Button>
               <Button type="button" onClick={handleDelete} disabled={deleting} className="bg-destructive hover:bg-destructive/90 text-destructive-foreground font-bold">
                 {deleting ? 'Deleting...' : 'Yes, Delete'}
+              </Button>
+            </div>
+          </div>
+        )}
+      </ModalPortal>
+    </>
+  );
+}
+
+
+
+// Partner Labs Management & Isolated Test Catalogues Component
+function PartnerLabs({ currentUser }: { currentUser: UserAccount }) {
+  const [partnerLabs, setPartnerLabs] = useState<PartnerLab[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [search, setSearch] = useState('');
+  const [statusFilter, setStatusFilter] = useState<'all' | 'active' | 'inactive'>('all');
+
+  // Lab modal state
+  const [showAddLab, setShowAddLab] = useState(false);
+  const [editingLab, setEditingLab] = useState<PartnerLab | null>(null);
+  const [deleteLab, setDeleteLab] = useState<PartnerLab | null>(null);
+  const [deletingLab, setDeletingLab] = useState(false);
+
+  // Lab form fields
+  const [labName, setLabName] = useState('');
+  const [labAddress, setLabAddress] = useState('');
+  const [labCity, setLabCity] = useState('');
+  const [labPhone, setLabPhone] = useState('');
+  const [labEmail, setLabEmail] = useState('');
+  const [labContactPerson, setLabContactPerson] = useState('');
+  const [labActive, setLabActive] = useState(true);
+
+  // Test Catalogue Management Modal for a specific lab
+  const [managingTestsLab, setManagingTestsLab] = useState<PartnerLab | null>(null);
+  const [testSearch, setTestSearch] = useState('');
+  const [showAddTest, setShowAddTest] = useState(false);
+  const [editingTest, setEditingTest] = useState<PartnerLabTest | null>(null);
+  const [deleteTest, setDeleteTest] = useState<PartnerLabTest | null>(null);
+  const [deletingTest, setDeletingTest] = useState(false);
+
+  // Test form fields
+  const [testName, setTestName] = useState('');
+  const [testCode, setTestCode] = useState('');
+  const [testCategory, setTestCategory] = useState('Pathology');
+  const [testPrice, setTestPrice] = useState('');
+  const [testB2bCost, setTestB2bCost] = useState('');
+  const [testPartnerShare, setTestPartnerShare] = useState('');
+  const [testAgentIncentive, setTestAgentIncentive] = useState('');
+  const [testTurnaround, setTestTurnaround] = useState('Same Day');
+  const [testSampleType, setTestSampleType] = useState('EDTA Whole Blood');
+  const [testInstructions, setTestInstructions] = useState('No special preparation required.');
+
+  const isAdmin = currentUser.role === 'ADMIN' || currentUser.role === 'SUPER_ADMIN';
+
+  const loadLabs = async () => {
+    setLoading(true);
+    try {
+      const res = await fetch('/api/partner-labs');
+      const data = await res.json();
+      setPartnerLabs(data);
+      if (managingTestsLab) {
+        const updated = data.find((l: PartnerLab) => l.id === managingTestsLab.id);
+        if (updated) setManagingTestsLab(updated);
+      }
+    } catch {
+      toast.error('Failed to load partner labs');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  useEffect(() => { loadLabs(); }, []);
+
+  const openAddLabModal = () => {
+    setLabName('');
+    setLabAddress('');
+    setLabCity('');
+    setLabPhone('');
+    setLabEmail('');
+    setLabContactPerson('');
+    setLabActive(true);
+    setShowAddLab(true);
+  };
+
+  const openEditLabModal = (lab: PartnerLab) => {
+    setEditingLab(lab);
+    setLabName(lab.name);
+    setLabAddress(lab.address);
+    setLabCity(lab.city || '');
+    setLabPhone(lab.phone || '');
+    setLabEmail(lab.email || '');
+    setLabContactPerson(lab.contactPerson || '');
+    setLabActive(lab.active !== false);
+  };
+
+  const handleSaveLab = async (e: FormEvent) => {
+    e.preventDefault();
+    if (!labName.trim() || !labAddress.trim()) {
+      toast.error('Lab Name and Address are required.');
+      return;
+    }
+
+    try {
+      if (editingLab) {
+        const res = await fetch(`/api/partner-labs/${editingLab.id}`, {
+          method: 'PATCH',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            name: labName,
+            address: labAddress,
+            city: labCity,
+            phone: labPhone,
+            email: labEmail,
+            contactPerson: labContactPerson,
+            active: labActive,
+          }),
+        });
+        if (!res.ok) throw new Error();
+        toast.success(`Partner lab "${labName}" updated successfully`);
+        setEditingLab(null);
+      } else {
+        const res = await fetch('/api/partner-labs', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            name: labName,
+            address: labAddress,
+            city: labCity,
+            phone: labPhone,
+            email: labEmail,
+            contactPerson: labContactPerson,
+            active: labActive,
+          }),
+        });
+        if (!res.ok) throw new Error();
+        toast.success(`Partner lab "${labName}" added successfully`);
+        setShowAddLab(false);
+      }
+      loadLabs();
+    } catch {
+      toast.error('Failed to save partner lab');
+    }
+  };
+
+  const handleDeleteLab = async () => {
+    if (!deleteLab) return;
+    setDeletingLab(true);
+    try {
+      const res = await fetch(`/api/partner-labs/${deleteLab.id}`, { method: 'DELETE' });
+      if (!res.ok) throw new Error();
+      toast.success(`Partner lab "${deleteLab.name}" removed`);
+      setDeleteLab(null);
+      loadLabs();
+    } catch {
+      toast.error('Failed to delete partner lab');
+    } finally {
+      setDeletingLab(false);
+    }
+  };
+
+  const openAddTestModal = () => {
+    setTestName('');
+    setTestCode('');
+    setTestCategory('Pathology');
+    setTestPrice('');
+    setTestB2bCost('');
+    setTestPartnerShare('');
+    setTestAgentIncentive('100');
+    setTestTurnaround('Same Day');
+    setTestSampleType('EDTA Whole Blood');
+    setTestInstructions('No special preparation required.');
+    setShowAddTest(true);
+  };
+
+  const openEditTestModal = (t: PartnerLabTest) => {
+    setEditingTest(t);
+    setTestName(t.name);
+    setTestCode(t.testCode);
+    setTestCategory(t.category || t.department || 'Pathology');
+    setTestPrice(String(t.price || ''));
+    setTestB2bCost(String(t.b2bCost || ''));
+    setTestPartnerShare(String(t.partnerShare || ''));
+    setTestAgentIncentive(String(t.agentIncentive || ''));
+    setTestTurnaround(t.turnaround || 'Same Day');
+    setTestSampleType(t.sampleType || 'EDTA Whole Blood');
+    setTestInstructions(t.instructions || 'No special preparation required.');
+  };
+
+  const handleSaveTest = async (e: FormEvent) => {
+    e.preventDefault();
+    if (!managingTestsLab) return;
+    if (!testName.trim() || !testPrice) {
+      toast.error('Test Name and Patient Price (MRP) are required.');
+      return;
+    }
+
+    const payload = {
+      name: testName.trim(),
+      testCode: testCode.trim() || `${testName.slice(0, 3).toUpperCase()}-01`,
+      category: testCategory,
+      price: Number(testPrice),
+      b2bCost: Number(testB2bCost || testPartnerShare || 0),
+      partnerShare: Number(testPartnerShare || testB2bCost || 0),
+      agentIncentive: Number(testAgentIncentive || 0),
+      turnaround: testTurnaround,
+      sampleType: testSampleType,
+      instructions: testInstructions,
+    };
+
+    try {
+      if (editingTest) {
+        const res = await fetch(`/api/partner-labs/${managingTestsLab.id}/tests/${editingTest.id}`, {
+          method: 'PATCH',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(payload),
+        });
+        if (!res.ok) throw new Error();
+        toast.success(`Test "${testName}" updated for ${managingTestsLab.name}`);
+        setEditingTest(null);
+      } else {
+        const res = await fetch(`/api/partner-labs/${managingTestsLab.id}/tests`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(payload),
+        });
+        if (!res.ok) throw new Error();
+        toast.success(`Test "${testName}" added to ${managingTestsLab.name}`);
+        setShowAddTest(false);
+      }
+      loadLabs();
+    } catch {
+      toast.error('Failed to save test for partner lab');
+    }
+  };
+
+  const handleDeleteTest = async () => {
+    if (!managingTestsLab || !deleteTest) return;
+    setDeletingTest(true);
+    try {
+      const res = await fetch(`/api/partner-labs/${managingTestsLab.id}/tests/${deleteTest.id}`, {
+        method: 'DELETE',
+      });
+      if (!res.ok) throw new Error();
+      toast.success(`Test "${deleteTest.name}" deleted from ${managingTestsLab.name}`);
+      setDeleteTest(null);
+      loadLabs();
+    } catch {
+      toast.error('Failed to delete test');
+    } finally {
+      setDeletingTest(false);
+    }
+  };
+
+  const filteredLabs = useMemo(() => {
+    return partnerLabs.filter((l) => {
+      if (statusFilter === 'active' && l.active === false) return false;
+      if (statusFilter === 'inactive' && l.active !== false) return false;
+      if (!search) return true;
+      const q = search.toLowerCase();
+      return [l.name, l.address, l.city, l.phone, l.email, l.contactPerson].some((v) =>
+        String(v || '').toLowerCase().includes(q)
+      );
+    });
+  }, [partnerLabs, search, statusFilter]);
+
+  const labTestsList = useMemo(() => {
+    if (!managingTestsLab || !Array.isArray(managingTestsLab.tests)) return [];
+    if (!testSearch) return managingTestsLab.tests;
+    const q = testSearch.toLowerCase();
+    return managingTestsLab.tests.filter((t) =>
+      [t.name, t.testCode, t.category, t.department, t.sampleType].some((v) =>
+        String(v || '').toLowerCase().includes(q)
+      )
+    );
+  }, [managingTestsLab, testSearch]);
+
+  const totalPartnerTestsCount = partnerLabs.reduce((sum, l) => sum + (l.tests?.length || 0), 0);
+
+  // Form Fields render function to guarantee NO focus/space loss
+  const renderLabFormFields = () => (
+    <div className="grid gap-4 sm:grid-cols-2">
+      <Field label="Partner Lab Name *">
+        <Input
+          value={labName}
+          onChange={(e) => setLabName(e.target.value)}
+          placeholder="e.g. SRL Reference Lab & Diagnostics"
+          required
+        />
+      </Field>
+      <Field label="City / Region">
+        <Input
+          value={labCity}
+          onChange={(e) => setLabCity(e.target.value)}
+          placeholder="e.g. Gurugram, NCR"
+        />
+      </Field>
+      <Field label="Complete Lab Address *" className="sm:col-span-2">
+        <Input
+          value={labAddress}
+          onChange={(e) => setLabAddress(e.target.value)}
+          placeholder="Building, Sector, Landmark, City, State..."
+          required
+        />
+      </Field>
+      <Field label="Contact Person / In-charge">
+        <Input
+          value={labContactPerson}
+          onChange={(e) => setLabContactPerson(e.target.value)}
+          placeholder="e.g. Dr. Rajesh Goel"
+        />
+      </Field>
+      <Field label="Phone / Dispatch Hotline">
+        <Input
+          value={labPhone}
+          onChange={(e) => setLabPhone(e.target.value)}
+          placeholder="e.g. +91 9811223344"
+        />
+      </Field>
+      <Field label="Dispatch / Escalation Email">
+        <Input
+          type="email"
+          value={labEmail}
+          onChange={(e) => setLabEmail(e.target.value)}
+          placeholder="orders@partnerlab.com"
+        />
+      </Field>
+      <Field label="Operational Status">
+        <Select value={labActive ? 'active' : 'inactive'} onChange={(e) => setLabActive(e.target.value === 'active')}>
+          <option value="active">Active (Available for Bookings)</option>
+          <option value="inactive">Inactive / Suspended</option>
+        </Select>
+      </Field>
+    </div>
+  );
+
+  const renderTestFormFields = () => (
+    <div className="grid gap-4 sm:grid-cols-2">
+      <Field label="Test Investigation Name *">
+        <Input
+          value={testName}
+          onChange={(e) => setTestName(e.target.value)}
+          placeholder="e.g. Complete Blood Count (CBC)"
+          required
+        />
+      </Field>
+      <Field label="Test Code *">
+        <Input
+          value={testCode}
+          onChange={(e) => setTestCode(e.target.value)}
+          placeholder="e.g. CBC-01"
+          required
+        />
+      </Field>
+      <Field label="Category / Department">
+        <Select value={testCategory} onChange={(e) => setTestCategory(e.target.value)}>
+          <option value="Pathology">Pathology</option>
+          <option value="Biochemistry">Biochemistry</option>
+          <option value="Microbiology">Microbiology</option>
+          <option value="Radiology">Radiology & Scans</option>
+          <option value="Cardiology">Cardiology</option>
+          <option value="Histopathology">Histopathology</option>
+          <option value="Molecular Diagnostics">Molecular Diagnostics</option>
+        </Select>
+      </Field>
+      <Field label="Patient Price / MRP (₹) *">
+        <Input
+          type="number"
+          value={testPrice}
+          onChange={(e) => setTestPrice(e.target.value)}
+          placeholder="e.g. 500"
+          required
+        />
+      </Field>
+      <Field label="Partner Lab Share / B2B Cost (₹) *">
+        <Input
+          type="number"
+          value={testPartnerShare}
+          onChange={(e) => setTestPartnerShare(e.target.value)}
+          placeholder="e.g. 260"
+          required
+        />
+      </Field>
+      <Field label="Referral Agent Incentive (₹)">
+        <Input
+          type="number"
+          value={testAgentIncentive}
+          onChange={(e) => setTestAgentIncentive(e.target.value)}
+          placeholder="e.g. 100"
+        />
+      </Field>
+      <Field label="Sample Type">
+        <Select value={testSampleType} onChange={(e) => setTestSampleType(e.target.value)}>
+          <option value="EDTA Whole Blood">EDTA Whole Blood</option>
+          <option value="Serum">Serum</option>
+          <option value="Fluoride Plasma">Fluoride Plasma</option>
+          <option value="Urine Sample">Urine Sample</option>
+          <option value="Stool Sample">Stool Sample</option>
+          <option value="N/A - Imaging / Scan">N/A - Imaging / Scan</option>
+        </Select>
+      </Field>
+      <Field label="Turnaround Time (TAT)">
+        <Select value={testTurnaround} onChange={(e) => setTestTurnaround(e.target.value)}>
+          <option value="2 Hours">2 Hours</option>
+          <option value="4 Hours">4 Hours</option>
+          <option value="Same Day">Same Day</option>
+          <option value="24 Hours">24 Hours</option>
+          <option value="48 Hours">48 Hours</option>
+          <option value="3-5 Days">3-5 Days</option>
+        </Select>
+      </Field>
+      <Field label="Preparation Instructions" className="sm:col-span-2">
+        <Input
+          value={testInstructions}
+          onChange={(e) => setTestInstructions(e.target.value)}
+          placeholder="e.g. 10-12 hours fasting required. Morning sample preferred."
+        />
+      </Field>
+    </div>
+  );
+
+  return (
+    <>
+      <PageTitle
+        eyebrow="Diagnostic Network & Outsourcing"
+        title="Partner Labs & Independent Test Catalogues"
+        detail="Manage outsourced partner laboratories, their addresses, and separate individual test catalogues with specific B2B shares."
+        action={isAdmin && <Button onClick={openAddLabModal}><Plus size={16} /> Add Partner Lab</Button>}
+      />
+
+      {/* Metrics Row */}
+      <div className="grid gap-4 sm:grid-cols-3 mb-6">
+        <Panel className="p-5 flex items-center gap-4">
+          <div className="grid size-12 place-items-center rounded-2xl bg-primary/10 text-primary">
+            <Building2 size={24} />
+          </div>
+          <div>
+            <div className="mono text-[10px] font-bold uppercase text-muted-foreground tracking-wider">Partner Labs</div>
+            <div className="text-2xl font-bold text-foreground mt-0.5">{partnerLabs.length}</div>
+            <div className="text-xs text-muted-foreground mt-0.5">{partnerLabs.filter((l) => l.active !== false).length} Active partners</div>
+          </div>
+        </Panel>
+
+        <Panel className="p-5 flex items-center gap-4">
+          <div className="grid size-12 place-items-center rounded-2xl bg-[#e5f5f1] text-[#167366]">
+            <FlaskConical size={24} />
+          </div>
+          <div>
+            <div className="mono text-[10px] font-bold uppercase text-muted-foreground tracking-wider">Catalogued Lab Tests</div>
+            <div className="text-2xl font-bold text-foreground mt-0.5">{totalPartnerTestsCount}</div>
+            <div className="text-xs text-muted-foreground mt-0.5">Separate tests managed per lab</div>
+          </div>
+        </Panel>
+
+        <Panel className="p-5 flex items-center gap-4">
+          <div className="grid size-12 place-items-center rounded-2xl bg-amber-500/10 text-amber-700">
+            <MapPin size={24} />
+          </div>
+          <div>
+            <div className="mono text-[10px] font-bold uppercase text-muted-foreground tracking-wider">Active Locations</div>
+            <div className="text-2xl font-bold text-foreground mt-0.5">
+              {new Set(partnerLabs.map((l) => l.city || 'NCR')).size}
+            </div>
+            <div className="text-xs text-muted-foreground mt-0.5">Operational dispatch hubs</div>
+          </div>
+        </Panel>
+      </div>
+
+      <Panel className="p-6">
+        {/* Search & Filter Bar */}
+        <div className="flex flex-col gap-3 border-b border-border pb-4 mb-5 sm:flex-row sm:items-center justify-between">
+          <div className="relative flex-1">
+            <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground" size={16} />
+            <Input
+              value={search}
+              onChange={(e) => setSearch(e.target.value)}
+              placeholder="Search partner lab by name, address, city, contact person..."
+              className="pl-9"
+            />
+          </div>
+          <div className="flex items-center gap-2">
+            <Select
+              value={statusFilter}
+              onChange={(e) => setStatusFilter(e.target.value as any)}
+              className="w-36"
+            >
+              <option value="all">All Statuses</option>
+              <option value="active">Active Only</option>
+              <option value="inactive">Inactive Only</option>
+            </Select>
+          </div>
+        </div>
+
+        {loading ? (
+          <div className="space-y-3">{[1, 2, 3].map((i) => <div key={i} className="skeleton h-16 rounded-xl" />)}</div>
+        ) : filteredLabs.length === 0 ? (
+          <div className="py-12 text-center">
+            <Building2 className="mx-auto text-muted-foreground/50 mb-3" size={40} />
+            <div className="font-bold text-base text-foreground">No Partner Labs Found</div>
+            <p className="text-xs text-muted-foreground mt-1">
+              {search ? `No partner labs match "${search}"` : 'Get started by adding your first outsourced partner diagnostic laboratory.'}
+            </p>
+            {isAdmin && !search && (
+              <Button onClick={openAddLabModal} className="mt-4"><Plus size={16} /> Add Partner Lab</Button>
+            )}
+          </div>
+        ) : (
+          <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
+            {filteredLabs.map((lab) => {
+              const testCount = lab.tests?.length || 0;
+              const isActive = lab.active !== false;
+              return (
+                <div
+                  key={lab.id}
+                  className="rounded-2xl border border-border bg-card hover:border-primary/40 transition-all p-5 shadow-sm flex flex-col justify-between"
+                >
+                  <div>
+                    <div className="flex items-start justify-between gap-2 mb-3">
+                      <div>
+                        <div className="flex items-center gap-2 flex-wrap">
+                          <h3 className="font-bold text-base text-foreground flex items-center gap-1.5">
+                            <Building2 size={18} className="text-primary shrink-0" />
+                            <span>{lab.name}</span>
+                          </h3>
+                        </div>
+                        {lab.city && (
+                          <span className="mono text-[10px] rounded bg-muted text-muted-foreground px-2 py-0.5 font-bold mt-1 inline-block">
+                            {lab.city}
+                          </span>
+                        )}
+                      </div>
+                      <span className={cx('rounded-lg px-2 py-0.5 text-[10px] font-bold shrink-0', isActive ? statusTone('active') : statusTone('blocked'))}>
+                        {isActive ? 'Active' : 'Inactive'}
+                      </span>
+                    </div>
+
+                    <div className="space-y-2 text-xs text-muted-foreground my-3">
+                      <div className="flex items-start gap-2">
+                        <MapPin size={14} className="text-primary shrink-0 mt-0.5" />
+                        <span className="text-foreground/90">{lab.address}</span>
+                      </div>
+                      {lab.contactPerson && (
+                        <div className="flex items-center gap-2">
+                          <UserRound size={14} className="text-muted-foreground shrink-0" />
+                          <span>Contact: <strong className="text-foreground">{lab.contactPerson}</strong></span>
+                        </div>
+                      )}
+                      {lab.phone && (
+                        <div className="flex items-center gap-2">
+                          <Phone size={14} className="text-muted-foreground shrink-0" />
+                          <span className="mono">{lab.phone}</span>
+                        </div>
+                      )}
+                      {lab.email && (
+                        <div className="flex items-center gap-2">
+                          <Mail size={14} className="text-muted-foreground shrink-0" />
+                          <span className="mono truncate">{lab.email}</span>
+                        </div>
+                      )}
+                    </div>
+                  </div>
+
+                  <div className="pt-4 border-t border-border mt-3 space-y-2.5">
+                    <div className="flex items-center justify-between">
+                      <span className="mono text-[11px] font-bold text-primary bg-primary/10 px-2 py-0.5 rounded-lg flex items-center gap-1">
+                        🔬 {testCount} Tests Conducted
+                      </span>
+                      {isAdmin && (
+                        <div className="flex items-center gap-1">
+                          <button
+                            type="button"
+                            onClick={() => openEditLabModal(lab)}
+                            className="grid size-8 place-items-center rounded-lg hover:bg-primary/10 text-primary transition-colors"
+                            title="Edit Partner Lab"
+                          >
+                            <Edit3 size={14} />
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => setDeleteLab(lab)}
+                            className="grid size-8 place-items-center rounded-lg hover:bg-destructive/10 text-destructive transition-colors"
+                            title="Delete Partner Lab"
+                          >
+                            <Trash2 size={14} />
+                          </button>
+                        </div>
+                      )}
+                    </div>
+
+                    <Button
+                      type="button"
+                      variant="secondary"
+                      onClick={() => setManagingTestsLab(lab)}
+                      className="w-full text-xs font-bold gap-1.5 h-9 bg-muted/40 hover:bg-primary hover:text-primary-foreground transition-all"
+                    >
+                      <FlaskConical size={14} />
+                      Manage Separate Test Catalogue ({testCount})
+                    </Button>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        )}
+      </Panel>
+
+      {/* Add / Edit Partner Lab Modal */}
+      <ModalPortal isOpen={showAddLab || !!editingLab} onClose={() => { setShowAddLab(false); setEditingLab(null); }} maxWidth="max-w-2xl">
+        <div className="flex shrink-0 items-center justify-between border-b border-border p-6 pb-4 bg-card">
+          <div>
+            <div className="mono text-[10px] font-bold uppercase tracking-[.18em] text-primary">Partner Lab Network</div>
+            <h2 className="text-xl font-bold text-foreground">
+              {editingLab ? `Edit Lab: ${editingLab.name}` : 'Add New Partner Laboratory'}
+            </h2>
+          </div>
+          <button
+            type="button"
+            onClick={() => { setShowAddLab(false); setEditingLab(null); }}
+            className="grid size-9 place-items-center rounded-xl hover:bg-muted text-muted-foreground"
+          >
+            <X size={18} />
+          </button>
+        </div>
+        <form onSubmit={handleSaveLab} className="flex flex-col min-h-0 flex-1 overflow-hidden">
+          <div className="flex-1 overflow-y-auto p-6 scrollbar-thin space-y-4">
+            {renderLabFormFields()}
+          </div>
+          <div className="flex shrink-0 justify-end gap-3 border-t border-border bg-muted/20 px-6 py-4">
+            <Button type="button" variant="secondary" onClick={() => { setShowAddLab(false); setEditingLab(null); }}>
+              Cancel
+            </Button>
+            <Button type="submit" className="font-bold">
+              {editingLab ? 'Save Lab Changes' : 'Create Partner Lab'}
+            </Button>
+          </div>
+        </form>
+      </ModalPortal>
+
+      {/* Delete Lab Confirmation Modal */}
+      <ModalPortal isOpen={!!deleteLab} onClose={() => setDeleteLab(null)} maxWidth="max-w-md">
+        {deleteLab && (
+          <div className="p-6">
+            <div className="flex items-center gap-3 mb-4">
+              <div className="grid size-10 place-items-center rounded-full bg-destructive/10 text-destructive">
+                <AlertTriangle size={18} />
+              </div>
+              <div>
+                <div className="font-bold text-foreground">Delete Partner Laboratory</div>
+                <div className="text-xs text-muted-foreground">This action removes the lab and its isolated test catalogue</div>
+              </div>
+            </div>
+            <p className="text-sm text-muted-foreground mb-5">
+              Are you sure you want to delete <strong className="text-foreground">{deleteLab.name}</strong> ({deleteLab.address})?
+              Existing appointments booked with this lab will retain historical snapshots.
+            </p>
+            <div className="flex justify-end gap-2">
+              <Button type="button" variant="secondary" onClick={() => setDeleteLab(null)}>Cancel</Button>
+              <Button
+                type="button"
+                onClick={handleDeleteLab}
+                disabled={deletingLab}
+                className="bg-destructive hover:bg-destructive/90 text-destructive-foreground font-bold"
+              >
+                {deletingLab ? 'Deleting...' : 'Yes, Delete Lab'}
+              </Button>
+            </div>
+          </div>
+        )}
+      </ModalPortal>
+
+      {/* Dedicated Test Catalogue Management Modal for a Lab */}
+      <ModalPortal isOpen={!!managingTestsLab} onClose={() => { setManagingTestsLab(null); setTestSearch(''); }} maxWidth="max-w-5xl">
+        {managingTestsLab && (
+          <div className="flex flex-col h-[85vh] max-h-[750px] overflow-hidden">
+            <div className="flex shrink-0 items-center justify-between border-b border-border p-6 pb-4 bg-card">
+              <div>
+                <div className="mono text-[10px] font-bold uppercase tracking-[.18em] text-primary flex items-center gap-2">
+                  <Building2 size={13} />
+                  <span>{managingTestsLab.name} — Individual Test Catalogue</span>
+                </div>
+                <h2 className="text-xl font-bold text-foreground mt-0.5">
+                  Tests Conducted by {managingTestsLab.name}
+                </h2>
+                <div className="text-xs text-muted-foreground flex items-center gap-1.5 mt-0.5">
+                  <MapPin size={12} /> {managingTestsLab.address}
+                </div>
+              </div>
+              <div className="flex items-center gap-2">
+                {isAdmin && (
+                  <Button onClick={openAddTestModal} className="h-9 font-bold text-xs gap-1.5">
+                    <Plus size={14} /> Add Test to this Lab
+                  </Button>
+                )}
+                <button
+                  type="button"
+                  onClick={() => { setManagingTestsLab(null); setTestSearch(''); }}
+                  className="grid size-9 place-items-center rounded-xl hover:bg-muted text-muted-foreground"
+                >
+                  <X size={18} />
+                </button>
+              </div>
+            </div>
+
+            {/* Test search filter */}
+            <div className="p-4 border-b border-border bg-muted/20 flex items-center justify-between gap-3">
+              <div className="relative flex-1">
+                <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground" size={15} />
+                <Input
+                  value={testSearch}
+                  onChange={(e) => setTestSearch(e.target.value)}
+                  placeholder={`Search ${managingTestsLab.name}'s tests by name, test code, category...`}
+                  className="pl-9 h-9 text-xs"
+                />
+              </div>
+              <span className="mono rounded bg-primary/10 px-2.5 py-1 text-xs font-bold text-primary shrink-0">
+                {labTestsList.length} Tests Conducted
+              </span>
+            </div>
+
+            {/* Tests table */}
+            <div className="flex-1 overflow-y-auto p-4 scrollbar-thin">
+              {labTestsList.length === 0 ? (
+                <div className="py-16 text-center">
+                  <FlaskConical className="mx-auto text-muted-foreground/40 mb-3" size={38} />
+                  <div className="font-bold text-sm text-foreground">No Tests in this Lab's Catalogue</div>
+                  <p className="text-xs text-muted-foreground mt-1">
+                    {testSearch ? `No tests match "${testSearch}"` : 'Every partner lab tests should be added separately with its custom pricing.'}
+                  </p>
+                  {isAdmin && (
+                    <Button onClick={openAddTestModal} className="mt-4 text-xs h-9">
+                      <Plus size={14} /> Add First Test to {managingTestsLab.name}
+                    </Button>
+                  )}
+                </div>
+              ) : (
+                <div className="overflow-x-auto rounded-xl border border-border">
+                  <table className="w-full text-left text-xs min-w-[700px]">
+                    <thead className="bg-muted/50 text-[10px] uppercase font-bold text-muted-foreground tracking-wider">
+                      <tr>
+                        <th className="px-4 py-3">Test Code & Investigation</th>
+                        <th className="px-3 py-3">Category</th>
+                        <th className="px-3 py-3">Sample & TAT</th>
+                        <th className="px-3 py-3 text-right">Patient MRP</th>
+                        <th className="px-3 py-3 text-right text-[#167366]">Lab Share / Cost</th>
+                        <th className="px-3 py-3 text-right text-[#a96816]">Agent Incentive</th>
+                        {isAdmin && <th className="px-3 py-3 text-right">Actions</th>}
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-border font-medium">
+                      {labTestsList.map((t) => (
+                        <tr key={t.id} className="hover:bg-muted/25 transition-colors">
+                          <td className="px-4 py-3">
+                            <div className="font-bold text-foreground flex items-center gap-1.5">
+                              <span>{t.name}</span>
+                              <span className="mono rounded bg-primary/10 text-primary px-1.5 py-0.2 text-[9px]">
+                                {t.testCode}
+                              </span>
+                            </div>
+                            <div className="text-[10px] text-muted-foreground mt-0.5 truncate max-w-xs">
+                              {t.instructions || 'Standard preparation'}
+                            </div>
+                          </td>
+                          <td className="px-3 py-3">
+                            <span className="rounded bg-muted px-2 py-0.5 text-[10px] font-bold text-foreground">
+                              {t.category || t.department || 'Pathology'}
+                            </span>
+                          </td>
+                          <td className="px-3 py-3 text-[11px] text-muted-foreground">
+                            <div>{t.sampleType || 'EDTA Whole Blood'}</div>
+                            <div className="text-[10px] text-primary/80 font-mono mt-0.5">TAT: {t.turnaround || 'Same Day'}</div>
+                          </td>
+                          <td className="px-3 py-3 text-right font-bold text-foreground mono">
+                            {money(t.price)}
+                          </td>
+                          <td className="px-3 py-3 text-right font-bold text-[#167366] mono">
+                            {money(t.partnerShare || t.b2bCost || 0)}
+                          </td>
+                          <td className="px-3 py-3 text-right font-bold text-[#a96816] mono">
+                            {money(t.agentIncentive || 0)}
+                          </td>
+                          {isAdmin && (
+                            <td className="px-3 py-3 text-right">
+                              <div className="flex items-center justify-end gap-1">
+                                <button
+                                  type="button"
+                                  onClick={() => openEditTestModal(t)}
+                                  className="grid size-7 place-items-center rounded-lg hover:bg-primary/10 text-primary transition-colors"
+                                  title="Edit Test"
+                                >
+                                  <Edit3 size={13} />
+                                </button>
+                                <button
+                                  type="button"
+                                  onClick={() => setDeleteTest(t)}
+                                  className="grid size-7 place-items-center rounded-lg hover:bg-destructive/10 text-destructive transition-colors"
+                                  title="Delete Test"
+                                >
+                                  <Trash2 size={13} />
+                                </button>
+                              </div>
+                            </td>
+                          )}
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              )}
+            </div>
+
+            <div className="flex shrink-0 justify-between items-center p-4 border-t border-border bg-muted/20 text-xs">
+              <span className="text-muted-foreground">
+                Assigned to: <strong className="text-foreground">{managingTestsLab.name}</strong>
+              </span>
+              <Button type="button" variant="secondary" onClick={() => { setManagingTestsLab(null); setTestSearch(''); }}>
+                Done
+              </Button>
+            </div>
+          </div>
+        )}
+      </ModalPortal>
+
+      {/* Add / Edit Test Modal for Selected Partner Lab */}
+      <ModalPortal isOpen={showAddTest || !!editingTest} onClose={() => { setShowAddTest(false); setEditingTest(null); }} maxWidth="max-w-2xl">
+        <div className="flex shrink-0 items-center justify-between border-b border-border p-6 pb-4 bg-card">
+          <div>
+            <div className="mono text-[10px] font-bold uppercase tracking-[.18em] text-primary">
+              {managingTestsLab?.name} Catalogue
+            </div>
+            <h2 className="text-xl font-bold text-foreground">
+              {editingTest ? `Edit Test: ${editingTest.name}` : `Add Test to ${managingTestsLab?.name}`}
+            </h2>
+          </div>
+          <button
+            type="button"
+            onClick={() => { setShowAddTest(false); setEditingTest(null); }}
+            className="grid size-9 place-items-center rounded-xl hover:bg-muted text-muted-foreground"
+          >
+            <X size={18} />
+          </button>
+        </div>
+        <form onSubmit={handleSaveTest} className="flex flex-col min-h-0 flex-1 overflow-hidden">
+          <div className="flex-1 overflow-y-auto p-6 scrollbar-thin space-y-4">
+            {renderTestFormFields()}
+          </div>
+          <div className="flex shrink-0 justify-end gap-3 border-t border-border bg-muted/20 px-6 py-4">
+            <Button type="button" variant="secondary" onClick={() => { setShowAddTest(false); setEditingTest(null); }}>
+              Cancel
+            </Button>
+            <Button type="submit" className="font-bold">
+              {editingTest ? 'Save Test Changes' : 'Add Test to Lab'}
+            </Button>
+          </div>
+        </form>
+      </ModalPortal>
+
+      {/* Delete Test Confirmation Dialog */}
+      <ModalPortal isOpen={!!deleteTest} onClose={() => setDeleteTest(null)} maxWidth="max-w-md">
+        {deleteTest && (
+          <div className="p-6">
+            <div className="flex items-center gap-3 mb-4">
+              <div className="grid size-10 place-items-center rounded-full bg-destructive/10 text-destructive">
+                <AlertTriangle size={18} />
+              </div>
+              <div>
+                <div className="font-bold text-foreground">Remove Test from Lab</div>
+                <div className="text-xs text-muted-foreground">Remove from this partner lab's catalogue</div>
+              </div>
+            </div>
+            <p className="text-sm text-muted-foreground mb-5">
+              Are you sure you want to remove <strong className="text-foreground">{deleteTest.name}</strong> ({deleteTest.testCode}) from {managingTestsLab?.name}?
+            </p>
+            <div className="flex justify-end gap-2">
+              <Button type="button" variant="secondary" onClick={() => setDeleteTest(null)}>Cancel</Button>
+              <Button
+                type="button"
+                onClick={handleDeleteTest}
+                disabled={deletingTest}
+                className="bg-destructive hover:bg-destructive/90 text-destructive-foreground font-bold"
+              >
+                {deletingTest ? 'Deleting...' : 'Yes, Remove Test'}
               </Button>
             </div>
           </div>
@@ -5445,6 +6526,7 @@ function Router({ currentUser, onLogout, onSwitchUser }: { currentUser: UserAcco
         <Route path="/appointments">{() => <Appointments currentUser={currentUser} />}</Route>
         <Route path="/appointments/:id">{() => paramsDetail ? <AppointmentDetailPage params={paramsDetail} currentUser={currentUser} /> : <NotFound />}</Route>
         <Route path="/slots" component={SlotsManager} />
+        <Route path="/partner-labs">{() => <PartnerLabs currentUser={currentUser} />}</Route>
         <Route path="/doctor-dashboard">{() => <DoctorDashboard currentUser={currentUser} />}</Route>
         <Route path="/referral-portal">{() => <ReferralPortal currentUser={currentUser} />}</Route>
         <Route path="/patients" component={Patients} />

@@ -44,7 +44,8 @@ type Entity =
   | "audit_log"
   | "doctor_price"
   | "ledger"
-  | "notification";
+  | "notification"
+  | "partner_lab";
 
 const router: IRouter = Router();
 let seedPromise: Promise<void> | undefined;
@@ -225,6 +226,252 @@ const seed = (): Record<string, JsonRecord[]> => {
       { id: "lab-rad", name: "Radiology & Imaging Lab", department: "Radiology", active: true },
       { id: "lab-nuc", name: "Nuclear Medicine Lab", department: "Nuclear Medicine", active: true },
     ],
+    partner_lab: [
+      {
+        id: "plab-srl",
+        name: "SRL Reference Lab & Diagnostics",
+        code: "SRL-01",
+        address: "Plot 45, Sector 14, DLF Phase 1, Gurugram",
+        city: "Gurugram",
+        phone: "+91 98112 00111",
+        email: "gurugram@srldiagnostics.in",
+        contactPerson: "Dr. R. K. Sharma",
+        active: true,
+        tests: [
+          {
+            id: "plt-srl-1",
+            testCode: "CBC-01",
+            name: "Complete Blood Count (CBC)",
+            category: "Pathology",
+            price: 450,
+            b2bCost: 200,
+            partnerShare: 100,
+            agentIncentive: 50,
+            turnaround: "4 hours",
+            sampleType: "EDTA Whole Blood 3ml",
+            instructions: "No fasting required",
+            parameters: [
+              { id: "p1", name: "Hemoglobin (Hb)", unit: "g/dL", normalRange: "13.0 - 17.0" },
+              { id: "p2", name: "Total Leucocyte Count (TLC)", unit: "cells/mcL", normalRange: "4,000 - 11,000" },
+              { id: "p3", name: "Platelet Count", unit: "lakh/cumm", normalRange: "1.5 - 4.5" }
+            ],
+            active: true
+          },
+          {
+            id: "plt-srl-2",
+            testCode: "THY-01",
+            name: "Thyroid Profile Total (T3, T4, TSH)",
+            category: "Biochemistry",
+            price: 850,
+            b2bCost: 350,
+            partnerShare: 200,
+            agentIncentive: 100,
+            turnaround: "6 hours",
+            sampleType: "Serum 2ml",
+            instructions: "Overnight 10-12 hours fasting recommended",
+            parameters: [
+              { id: "p1", name: "T3 Total", unit: "ng/dL", normalRange: "80 - 200" },
+              { id: "p2", name: "T4 Total", unit: "mcg/dL", normalRange: "4.5 - 12.0" },
+              { id: "p3", name: "TSH Ultrasensitive", unit: "uIU/mL", normalRange: "0.4 - 4.2" }
+            ],
+            active: true
+          },
+          {
+            id: "plt-srl-3",
+            testCode: "LFT-01",
+            name: "Liver Function Test (LFT)",
+            category: "Pathology",
+            price: 950,
+            b2bCost: 400,
+            partnerShare: 250,
+            agentIncentive: 100,
+            turnaround: "Same Day",
+            sampleType: "Serum 2ml",
+            instructions: "Fasting 8 hours",
+            parameters: [
+              { id: "p1", name: "SGPT / ALT", unit: "U/L", normalRange: "0 - 45" },
+              { id: "p2", name: "SGOT / AST", unit: "U/L", normalRange: "0 - 40" },
+              { id: "p3", name: "Bilirubin Total", unit: "mg/dL", normalRange: "0.2 - 1.2" }
+            ],
+            active: true
+          },
+          {
+            id: "plt-srl-4",
+            testCode: "LIP-01",
+            name: "Lipid Profile Comprehensive",
+            category: "Biochemistry",
+            price: 800,
+            b2bCost: 320,
+            partnerShare: 200,
+            agentIncentive: 80,
+            turnaround: "Same Day",
+            sampleType: "Serum 2ml",
+            instructions: "12 hours strict overnight fasting",
+            parameters: [
+              { id: "p1", name: "Total Cholesterol", unit: "mg/dL", normalRange: "< 200" },
+              { id: "p2", name: "Triglycerides", unit: "mg/dL", normalRange: "< 150" },
+              { id: "p3", name: "HDL Cholesterol", unit: "mg/dL", normalRange: "> 40" }
+            ],
+            active: true
+          }
+        ]
+      },
+      {
+        id: "plab-lal",
+        name: "Dr. Lal PathLabs Advanced Center",
+        code: "LAL-02",
+        address: "100ft Road, Opposite Metro Pillar 42, Indiranagar, Bengaluru",
+        city: "Bengaluru",
+        phone: "+91 80 4455 6677",
+        email: "care@lalpathlabs.in",
+        contactPerson: "Dr. Ananya Sen",
+        active: true,
+        tests: [
+          {
+            id: "plt-lal-1",
+            testCode: "CBC-02",
+            name: "Complete Hemogram with ESR",
+            category: "Pathology",
+            price: 480,
+            b2bCost: 210,
+            partnerShare: 120,
+            agentIncentive: 50,
+            turnaround: "5 hours",
+            sampleType: "EDTA Blood 3ml",
+            instructions: "No fasting needed",
+            parameters: [
+              { id: "p1", name: "Hemoglobin", unit: "g/dL", normalRange: "12.0 - 16.5" },
+              { id: "p2", name: "ESR Westergren", unit: "mm/hr", normalRange: "0 - 20" },
+              { id: "p3", name: "RBC Count", unit: "mil/mcL", normalRange: "4.0 - 5.5" }
+            ],
+            active: true
+          },
+          {
+            id: "plt-lal-2",
+            testCode: "HBA1C-01",
+            name: "HbA1c (Glycosylated Hemoglobin)",
+            category: "Biochemistry",
+            price: 600,
+            b2bCost: 250,
+            partnerShare: 150,
+            agentIncentive: 60,
+            turnaround: "4 hours",
+            sampleType: "EDTA Blood 2ml",
+            instructions: "No fasting required",
+            parameters: [
+              { id: "p1", name: "HbA1c Concentration", unit: "%", normalRange: "< 5.7 (Normal), 5.7-6.4 (Prediabetes)" },
+              { id: "p2", name: "Estimated Average Glucose (eAG)", unit: "mg/dL", normalRange: "< 117" }
+            ],
+            active: true
+          },
+          {
+            id: "plt-lal-3",
+            testCode: "KFT-01",
+            name: "Kidney Function Test (KFT)",
+            category: "Biochemistry",
+            price: 900,
+            b2bCost: 380,
+            partnerShare: 220,
+            agentIncentive: 90,
+            turnaround: "Same Day",
+            sampleType: "Serum 2ml",
+            instructions: "Non-fasting",
+            parameters: [
+              { id: "p1", name: "Blood Urea", unit: "mg/dL", normalRange: "15 - 40" },
+              { id: "p2", name: "Serum Creatinine", unit: "mg/dL", normalRange: "0.6 - 1.2" },
+              { id: "p3", name: "Serum Uric Acid", unit: "mg/dL", normalRange: "3.5 - 7.2" }
+            ],
+            active: true
+          },
+          {
+            id: "plt-lal-4",
+            testCode: "VIT-D",
+            name: "Vitamin D3 (25-Hydroxy)",
+            category: "Specialized",
+            price: 1400,
+            b2bCost: 600,
+            partnerShare: 350,
+            agentIncentive: 150,
+            turnaround: "24 hours",
+            sampleType: "Serum 2ml",
+            instructions: "Overnight fasting preferable",
+            parameters: [
+              { id: "p1", name: "25-OH Vitamin D Total", unit: "ng/mL", normalRange: "30.0 - 100.0 (Sufficient)" }
+            ],
+            active: true
+          }
+        ]
+      },
+      {
+        id: "plab-metro",
+        name: "Metropolis Imaging & Scan Center",
+        code: "MET-03",
+        address: "SV Road, Near Sports Club, Andheri West, Mumbai",
+        city: "Mumbai",
+        phone: "+91 22 6789 0123",
+        email: "mumbai@metropolisindia.com",
+        contactPerson: "Dr. Vikram Sethi",
+        active: true,
+        tests: [
+          {
+            id: "plt-met-1",
+            testCode: "USG-01",
+            name: "Ultrasound Whole Abdomen & Pelvis",
+            category: "Radiology",
+            price: 1800,
+            b2bCost: 800,
+            partnerShare: 400,
+            agentIncentive: 150,
+            turnaround: "Immediate",
+            sampleType: "N/A",
+            instructions: "Full bladder required. Drink 1L water 1 hour before scan.",
+            parameters: [
+              { id: "p1", name: "Liver & Portal Vein", unit: "N/A", normalRange: "Normal parenchymal echotexture" },
+              { id: "p2", name: "Gall Bladder & CBD", unit: "N/A", normalRange: "No calculi, lumen clear" },
+              { id: "p3", name: "Kidneys & Bladder", unit: "N/A", normalRange: "Normal bilateral cortical thickness" }
+            ],
+            active: true
+          },
+          {
+            id: "plt-met-2",
+            testCode: "MRI-01",
+            name: "MRI Brain (Plain & Contrast)",
+            category: "Imaging",
+            price: 6500,
+            b2bCost: 3000,
+            partnerShare: 1500,
+            agentIncentive: 500,
+            turnaround: "Same Day",
+            sampleType: "N/A",
+            instructions: "Fasting for 4 hours for contrast injection. Remove all metallic objects.",
+            parameters: [
+              { id: "p1", name: "Cerebral Hemispheres", unit: "N/A", normalRange: "No acute infarct or bleed" },
+              { id: "p2", name: "Ventricular System", unit: "N/A", normalRange: "Normal size and configuration" },
+              { id: "p3", name: "Post-Contrast Enhancement", unit: "N/A", normalRange: "No abnormal enhancement" }
+            ],
+            active: true
+          },
+          {
+            id: "plt-met-3",
+            testCode: "CT-01",
+            name: "HRCT Chest (High Resolution CT Lung)",
+            category: "Imaging",
+            price: 4200,
+            b2bCost: 1800,
+            partnerShare: 900,
+            agentIncentive: 300,
+            turnaround: "4 hours",
+            sampleType: "N/A",
+            instructions: "Breathing breath-hold instructions will be given during acquisition.",
+            parameters: [
+              { id: "p1", name: "Lung Parenchyma", unit: "N/A", normalRange: "Clear bilateral lung fields, no GGO" },
+              { id: "p2", name: "Mediastinum & Pleura", unit: "N/A", normalRange: "No pleural effusion or lymphadenopathy" }
+            ],
+            active: true
+          }
+        ]
+      }
+    ],
     appointment: [],
     slot: [],
     ledger: [],
@@ -354,6 +601,21 @@ async function ensureSeed() {
           const updated = { ...t, parameters: resolved, parameterCount: resolved.length };
           await db.update(diagnosticRecordsTable).set({ payload: updated }).where(eq(diagnosticRecordsTable.id, row.id));
         }
+      }
+
+      // Ensure partner labs are seeded if not present
+      try {
+        const existingPartnerLabs: any[] = await db.select().from(diagnosticRecordsTable).where(eq(diagnosticRecordsTable.entity, "partner_lab"));
+        if (existingPartnerLabs.length === 0) {
+          const data = seed();
+          const plabs = data.partner_lab || [];
+          const values = plabs.map((payload) => ({ id: `partner_lab:${String(payload.id)}`, entity: "partner_lab", payload }));
+          if (values.length > 0) {
+            await db.insert(diagnosticRecordsTable).values(values);
+          }
+        }
+      } catch (err) {
+        console.warn("Could not seed partner labs:", err);
       }
     })();
   }
@@ -986,6 +1248,150 @@ router.post("/agents", async (req, res) => {
 router.get("/branches", async (_req, res) => res.json(await records("branch")));
 router.get("/labs", async (_req, res) => res.json(await records("lab")));
 
+// ==========================================
+// Partner Labs & Isolated Lab Test Catalogues
+// ==========================================
+router.get("/partner-labs", async (req, res) => {
+  let items = await records("partner_lab");
+  const { search, active } = req.query;
+  if (search) {
+    const q = String(search).toLowerCase();
+    items = items.filter((pl: any) =>
+      [pl.name, pl.code, pl.city, pl.address, pl.contactPerson, pl.phone].some((v) => String(v || "").toLowerCase().includes(q))
+    );
+  }
+  if (active !== undefined) {
+    const isActive = active === "true";
+    items = items.filter((pl: any) => pl.active === isActive);
+  }
+  return res.json(items);
+});
+
+router.get("/partner-labs/:id", async (req, res) => {
+  const lab = await record("partner_lab", req.params.id);
+  if (!lab) return res.status(404).json({ error: "Partner lab not found." });
+  return res.json(lab);
+});
+
+router.post("/partner-labs", async (req, res) => {
+  const { name, code, address, city, phone, email, contactPerson, active, tests } = req.body;
+  if (!name || !address) {
+    return res.status(400).json({ error: "Partner lab name and address are required." });
+  }
+  const labId = `plab-${uid("lab")}`;
+  const partnerLab = {
+    id: labId,
+    name: String(name).trim(),
+    code: String(code || name.slice(0, 3).toUpperCase() + "-01").trim(),
+    address: String(address).trim(),
+    city: String(city || "Oxycare Zone").trim(),
+    phone: String(phone || "+91 98000 00000").trim(),
+    email: String(email || "").trim(),
+    contactPerson: String(contactPerson || "").trim(),
+    active: active !== undefined ? Boolean(active) : true,
+    tests: Array.isArray(tests) ? tests : [],
+    createdAt: new Date().toISOString()
+  };
+
+  await db.insert(diagnosticRecordsTable).values({ id: `partner_lab:${labId}`, entity: "partner_lab", payload: partnerLab });
+  await logAudit("Super Admin", "SUPER_ADMIN", "CREATE_PARTNER_LAB", "partner_lab", labId, { name: partnerLab.name });
+  return res.status(201).json(partnerLab);
+});
+
+router.patch("/partner-labs/:id", async (req, res) => {
+  const lab = await record("partner_lab", req.params.id);
+  if (!lab) return res.status(404).json({ error: "Partner lab not found." });
+
+  const updated = {
+    ...lab,
+    ...req.body,
+    id: lab.id, // prevent id overwrite
+    updatedAt: new Date().toISOString()
+  };
+
+  await save("partner_lab", updated);
+  await logAudit("Super Admin", "SUPER_ADMIN", "UPDATE_PARTNER_LAB", "partner_lab", String(lab.id), { name: updated.name });
+  return res.json(updated);
+});
+
+router.delete("/partner-labs/:id", async (req, res) => {
+  const lab = await record("partner_lab", req.params.id);
+  if (!lab) return res.status(404).json({ error: "Partner lab not found." });
+
+  await db.delete(diagnosticRecordsTable).where(eq(diagnosticRecordsTable.id, `partner_lab:${req.params.id}`));
+  await logAudit("Super Admin", "SUPER_ADMIN", "DELETE_PARTNER_LAB", "partner_lab", req.params.id, { name: lab.name });
+  return res.json({ success: true, id: req.params.id });
+});
+
+// Partner Lab Specific Test Management (Every partner lab's tests managed separately)
+router.post("/partner-labs/:id/tests", async (req, res) => {
+  const lab: any = await record("partner_lab", req.params.id);
+  if (!lab) return res.status(404).json({ error: "Partner lab not found." });
+
+  const { name, testCode, category, price, b2bCost, partnerShare, agentIncentive, turnaround, sampleType, instructions, parameters } = req.body;
+  if (!name || price === undefined) {
+    return res.status(400).json({ error: "Test name and price are required." });
+  }
+
+  const newTest = {
+    id: `plt-${uid("test")}`,
+    name: String(name).trim(),
+    testCode: String(testCode || `${name.slice(0, 3).toUpperCase()}-01`).trim(),
+    category: String(category || "Pathology").trim(),
+    price: Number(price || 0),
+    b2bCost: Number(b2bCost || 0),
+    partnerShare: Number(partnerShare || 0),
+    agentIncentive: Number(agentIncentive || 0),
+    turnaround: String(turnaround || "Same Day").trim(),
+    sampleType: String(sampleType || "Blood").trim(),
+    instructions: String(instructions || "Standard preparation").trim(),
+    parameters: Array.isArray(parameters) ? parameters : [],
+    active: true,
+    addedAt: new Date().toISOString()
+  };
+
+  const existingTests = Array.isArray(lab.tests) ? lab.tests : [];
+  const updatedTests = [...existingTests, newTest];
+  const updatedLab = { ...lab, tests: updatedTests, updatedAt: new Date().toISOString() };
+
+  await save("partner_lab", updatedLab);
+  await logAudit("Super Admin", "SUPER_ADMIN", "ADD_PARTNER_LAB_TEST", "partner_lab", String(lab.id), { testName: newTest.name });
+  return res.status(201).json({ lab: updatedLab, test: newTest });
+});
+
+router.patch("/partner-labs/:id/tests/:testId", async (req, res) => {
+  const lab: any = await record("partner_lab", req.params.id);
+  if (!lab) return res.status(404).json({ error: "Partner lab not found." });
+
+  const existingTests: any[] = Array.isArray(lab.tests) ? lab.tests : [];
+  const testIndex = existingTests.findIndex((t: any) => t.id === req.params.testId);
+  if (testIndex === -1) return res.status(404).json({ error: "Test not found in this partner lab." });
+
+  existingTests[testIndex] = {
+    ...existingTests[testIndex],
+    ...req.body,
+    id: req.params.testId,
+    updatedAt: new Date().toISOString()
+  };
+
+  const updatedLab = { ...lab, tests: existingTests, updatedAt: new Date().toISOString() };
+  await save("partner_lab", updatedLab);
+  return res.json({ lab: updatedLab, test: existingTests[testIndex] });
+});
+
+router.delete("/partner-labs/:id/tests/:testId", async (req, res) => {
+  const lab: any = await record("partner_lab", req.params.id);
+  if (!lab) return res.status(404).json({ error: "Partner lab not found." });
+
+  const existingTests: any[] = Array.isArray(lab.tests) ? lab.tests : [];
+  const updatedTests = existingTests.filter((t: any) => t.id !== req.params.testId);
+
+  const updatedLab = { ...lab, tests: updatedTests, updatedAt: new Date().toISOString() };
+  await save("partner_lab", updatedLab);
+  await logAudit("Super Admin", "SUPER_ADMIN", "DELETE_PARTNER_LAB_TEST", "partner_lab", String(lab.id), { testId: req.params.testId });
+  return res.json({ success: true, lab: updatedLab });
+});
+
 // Dashboard Summary
 router.get("/dashboard/summary", async (_req, res) => {
   const appointments = await records("appointment");
@@ -1106,6 +1512,17 @@ router.post("/appointments", async (req, res) => {
 
   if (!patient) return res.status(400).json({ error: "Patient details missing." });
 
+  // Mandatory Partner Lab selection
+  if (!body.partnerLabId && !body.partnerLabName) {
+    return res.status(400).json({ error: "Partner Lab selection is required for booking." });
+  }
+
+  const partnerLabs = await records("partner_lab");
+  const matchedLab = partnerLabs.find((pl: any) => pl.id === body.partnerLabId || pl.name === body.partnerLabName);
+  const partnerLabId = matchedLab?.id || body.partnerLabId || "plab-srl";
+  const partnerLabName = matchedLab?.name || body.partnerLabName || "SRL Reference Lab & Diagnostics";
+  const partnerLabAddress = matchedLab?.address || body.partnerLabAddress || "Sector 14, Gurugram";
+
   // Handle Multi-Test Selection
   const rawItems: any[] = Array.isArray(body.items) && body.items.length > 0
     ? body.items
@@ -1117,9 +1534,15 @@ router.post("/appointments", async (req, res) => {
   let calculatedAgentIncentive = 0;
   const testNames: string[] = [];
 
+  const labTests: any[] = Array.isArray(matchedLab?.tests) ? matchedLab.tests : [];
+
   for (const raw of rawItems) {
-    const matchedTest = tests.find((t) => t.id === raw.testId || t.name === raw.testName || t.testCode === raw.testCode) || tests[0];
-    let price = raw.price !== undefined ? Number(raw.price) : Number(matchedTest.price);
+    const matchedTest = labTests.find((t: any) => t.id === raw.testId || t.name === raw.testName || t.testCode === raw.testCode) ||
+                        tests.find((t) => t.id === raw.testId || t.name === raw.testName || t.testCode === raw.testCode) ||
+                        raw;
+    const testName = raw.testName || matchedTest.name || "Diagnostic Test";
+    const testCode = raw.testCode || matchedTest.testCode || `TEST-${raw.testId || uid("t")}`;
+    let price = raw.price !== undefined ? Number(raw.price) : Number(matchedTest.price || 0);
     let pShare = raw.partnerShare !== undefined ? Number(raw.partnerShare) : Number(matchedTest.partnerShare || 0);
     let aIncentive = raw.agentIncentive !== undefined ? Number(raw.agentIncentive) : Number(matchedTest.agentIncentive || 0);
 
@@ -1128,7 +1551,7 @@ router.post("/appointments", async (req, res) => {
       const doctors = await records("doctor");
       const docObj = doctors.find((d: any) => String(d.name).toLowerCase() === String(body.doctor).toLowerCase() || d.id === body.doctor);
       if (docObj) {
-        const dpMatch = doctorPrices.find((dp: any) => dp.doctorId === docObj.id && dp.testId === matchedTest.id);
+        const dpMatch = doctorPrices.find((dp: any) => dp.doctorId === docObj.id && (dp.testId === matchedTest.id || dp.testId === raw.testId));
         if (dpMatch && dpMatch.customPrice) {
           price = Number(dpMatch.customPrice);
           pShare = dpMatch.partnerShare !== undefined ? Number(dpMatch.partnerShare) : pShare;
@@ -1142,20 +1565,20 @@ router.post("/appointments", async (req, res) => {
     calculatedTotal += lineTotal;
     calculatedPartnerShare += pShare * qty;
     calculatedAgentIncentive += aIncentive * qty;
-    testNames.push(String(matchedTest.name || "Diagnostic Test"));
+    testNames.push(testName);
 
     const paramsList = Array.isArray(raw.parameters) && raw.parameters.length > 0
       ? raw.parameters
       : (Array.isArray(matchedTest.parameters) ? matchedTest.parameters : []);
 
     items.push({
-      testId: matchedTest.id,
-      testCode: matchedTest.testCode || `TEST-${matchedTest.id}`,
-      testName: matchedTest.name,
+      testId: matchedTest.id || raw.testId,
+      testCode,
+      testName,
       price,
       partnerShare: pShare,
       agentIncentive: aIncentive,
-      instructions: matchedTest.instructions || "No special preparation required.",
+      instructions: raw.instructions || matchedTest.instructions || "No special preparation required.",
       parameters: paramsList,
       quantity: qty,
       lineTotal,
@@ -1163,7 +1586,7 @@ router.post("/appointments", async (req, res) => {
   }
 
   const primaryTestName = testNames.join(", ");
-  const primaryLab = tests.find((t) => t.id === items[0]?.testId)?.department === "Pathology" ? "Central Lab" : (tests.find((t) => t.id === items[0]?.testId)?.department || "Central Lab");
+  const primaryLab = partnerLabName || (tests.find((t) => t.id === items[0]?.testId)?.department === "Pathology" ? "Central Lab" : (tests.find((t) => t.id === items[0]?.testId)?.department || "Central Lab"));
 
   const slots = await records("slot");
   let slot = slots.find((item) => item.id === body.slotId);
@@ -1203,6 +1626,9 @@ router.post("/appointments", async (req, res) => {
     testName: primaryTestName,
     lab: primaryLab,
     branch: body.branch || "Indiranagar",
+    partnerLabId,
+    partnerLabName,
+    partnerLabAddress,
     date: body.date || today(),
     time: body.time || "09:30 AM",
     doctor: body.doctor ?? null,
