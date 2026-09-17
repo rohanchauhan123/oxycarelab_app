@@ -88,6 +88,9 @@ interface ExtendedAppointment {
   patientName: string;
   uhid: string;
   mobile: string;
+  email?: string | null;
+  age?: number | string | null;
+  gender?: string | null;
   testId?: string;
   testName: string;
   lab: string;
@@ -1128,6 +1131,7 @@ function Dashboard({ currentUser }: { currentUser: UserAccount }) {
   const summary = summaryQuery.data as DashboardSummary | undefined;
   const allAppointments = (appointmentQuery.data?.items ?? []) as ExtendedAppointment[];
   const activities = (activityQuery.data as Activity[] | undefined) ?? [];
+  const [editingAppointment, setEditingAppointment] = useState<ExtendedAppointment | null>(null);
 
   // Filter appointments specifically for current user identity
   const userAppointments = useMemo(() => {
@@ -1319,7 +1323,16 @@ function Dashboard({ currentUser }: { currentUser: UserAccount }) {
           {displayAppointments.length ? (
             <div className="divide-y divide-border">
               {displayAppointments.slice(0, 6).map((appointment) => (
-                <AppointmentRow key={appointment.id} appointment={appointment} compact />
+                <AppointmentRow
+                  key={appointment.id}
+                  appointment={appointment}
+                  compact
+                  onEdit={(apt) => setEditingAppointment(apt)}
+                  onChange={() => {
+                    appointmentQuery.refetch();
+                    summaryQuery.refetch();
+                  }}
+                />
               ))}
             </div>
           ) : (
@@ -1341,11 +1354,8 @@ function Dashboard({ currentUser }: { currentUser: UserAccount }) {
         <QueryState loading={activityQuery.isLoading} error={!!activityQuery.error} retry={() => activityQuery.refetch()}>
           {activities.length ? (
             <div className="divide-y divide-border">
-              {activities.slice(0, 6).map((activity) => (
-                <div key={activity.id} className="flex gap-3 px-5 py-3.5">
-                  <div className="mt-0.5 grid size-8 shrink-0 place-items-center rounded-lg bg-muted text-primary">
-                    <ActivityIcon size={15} />
-                  </div>
+              {activities.slice(0, 8).map((activity) => (
+                <div key={activity.id} className="flex items-center justify-between gap-3 px-5 py-3">
                   <div className="min-w-0 flex-1">
                     <div className="truncate text-xs font-semibold">{activity.title}</div>
                     <div className="mt-0.5 truncate text-[11px] text-muted-foreground">{activity.detail}</div>
@@ -1360,11 +1370,38 @@ function Dashboard({ currentUser }: { currentUser: UserAccount }) {
         </QueryState>
       </Panel>
     </div>
+
+    {/* Edit Appointment Modal from Dashboard */}
+    {editingAppointment && (
+      <EditAppointmentModal
+        isOpen={!!editingAppointment}
+        appointment={editingAppointment}
+        onClose={() => setEditingAppointment(null)}
+        onSaved={() => {
+          setEditingAppointment(null);
+          appointmentQuery.refetch();
+          summaryQuery.refetch();
+        }}
+        currentUser={currentUser}
+      />
+    )}
   </>;
 }
 
 // Appointment Row Component
-function AppointmentRow({ appointment, compact = false, onChange, canChangeStatus = true }: { appointment: ExtendedAppointment; compact?: boolean; onChange?: () => void; canChangeStatus?: boolean }) {
+function AppointmentRow({
+  appointment,
+  compact = false,
+  onChange,
+  onEdit,
+  canChangeStatus = true,
+}: {
+  appointment: ExtendedAppointment;
+  compact?: boolean;
+  onChange?: () => void;
+  onEdit?: (appointment: ExtendedAppointment) => void;
+  canChangeStatus?: boolean;
+}) {
   const queryClient = useQueryClient();
 
   const handleStatusChange = async (newStatus: string, e: React.ChangeEvent<HTMLSelectElement>) => {
@@ -1445,21 +1482,21 @@ function AppointmentRow({ appointment, compact = false, onChange, canChangeStatu
 
       <div className="w-[130px] shrink-0" onClick={(e) => e.stopPropagation()}>
         {canChangeStatus ? (
-        <select
-          value={appointment.status}
-          onChange={(e) => handleStatusChange(e.target.value, e)}
-          className={cx('h-8 w-full rounded-lg border px-2 text-xs font-bold outline-none', statusTone(appointment.status))}
-        >
-          <option value="Scheduled">Scheduled</option>
-          <option value="Confirmed">Confirmed</option>
-          <option value="Patient Arrived">Patient Arrived</option>
-          <option value="Sample Collected">Sample Collected</option>
-          <option value="In Process">In Process</option>
-          <option value="Report Ready">Report Ready</option>
-          <option value="Completed">Completed</option>
-          <option value="Pending Payment">Pending Payment</option>
-          <option value="Cancelled">Cancelled</option>
-        </select>
+          <select
+            value={appointment.status}
+            onChange={(e) => handleStatusChange(e.target.value, e)}
+            className={cx('h-8 w-full rounded-lg border px-2 text-xs font-bold outline-none cursor-pointer', statusTone(appointment.status))}
+          >
+            <option value="Scheduled">Scheduled</option>
+            <option value="Confirmed">Confirmed</option>
+            <option value="Patient Arrived">Patient Arrived</option>
+            <option value="Sample Collected">Sample Collected</option>
+            <option value="In Process">In Process</option>
+            <option value="Report Ready">Report Ready</option>
+            <option value="Completed">Completed</option>
+            <option value="Pending Payment">Pending Payment</option>
+            <option value="Cancelled">Cancelled</option>
+          </select>
         ) : (
           <span className={cx('inline-flex h-8 w-full items-center rounded-lg border px-2 text-xs font-bold', statusTone(appointment.status))}>
             {titleCase(appointment.status)}
@@ -1467,14 +1504,917 @@ function AppointmentRow({ appointment, compact = false, onChange, canChangeStatu
         )}
       </div>
 
-      {!compact && (
-        <Link href={`/appointments/${appointment.id}`} className="shrink-0">
-          <button title="Open Full Detail Page" className="inline-flex h-8 items-center gap-1 rounded-lg border border-border bg-card px-2.5 text-xs font-semibold hover:bg-muted hover:text-primary">
-            <Eye size={14} /> Open
+      <div className="flex items-center gap-1.5 shrink-0" onClick={(e) => e.stopPropagation()}>
+        {onEdit && (
+          <button
+            type="button"
+            title="Edit Appointment"
+            onClick={() => onEdit(appointment)}
+            className="inline-flex h-8 items-center gap-1 rounded-lg border border-primary/30 bg-primary/10 text-primary px-2.5 text-xs font-bold hover:bg-primary hover:text-primary-foreground transition-colors cursor-pointer"
+          >
+            <Edit3 size={13} /> Edit
           </button>
-        </Link>
-      )}
+        )}
+        {!compact && (
+          <Link href={`/appointments/${appointment.id}`}>
+            <button title="Open Full Detail Page" className="inline-flex h-8 items-center gap-1 rounded-lg border border-border bg-card px-2.5 text-xs font-semibold hover:bg-muted hover:text-primary cursor-pointer">
+              <Eye size={14} /> Open
+            </button>
+          </Link>
+        )}
+      </div>
     </div>
+  );
+}
+
+// Comprehensive Edit Appointment Modal Component
+interface EditAppointmentModalProps {
+  isOpen: boolean;
+  appointment: ExtendedAppointment;
+  onClose: () => void;
+  onSaved: (updated: ExtendedAppointment) => void;
+  currentUser?: UserAccount;
+}
+
+function EditAppointmentModal({
+  isOpen,
+  appointment,
+  onClose,
+  onSaved,
+  currentUser,
+}: EditAppointmentModalProps) {
+  // Patient Details
+  const [patientName, setPatientName] = useState(appointment.patientName || '');
+  const [mobile, setMobile] = useState(appointment.mobile || '');
+  const [email, setEmail] = useState(appointment.email || '');
+  const [age, setAge] = useState(String(appointment.age || 30));
+  const [gender, setGender] = useState(appointment.gender || 'Male');
+
+  // Visit & Scheduling
+  const [bookingType, setBookingType] = useState<'Lab Visit' | 'Home Collection'>(
+    appointment.bookingType || (appointment.address ? 'Home Collection' : 'Lab Visit')
+  );
+  const [address, setAddress] = useState(appointment.address || '');
+  const [pinCode, setPinCode] = useState(appointment.pinCode || '');
+  const [collectionDate, setCollectionDate] = useState(appointment.collectionDate || appointment.date || today);
+  const [timeSlot, setTimeSlot] = useState(appointment.timeSlot || appointment.time || '09:30 AM');
+  const [date, setDate] = useState(appointment.date || today);
+  const [time, setTime] = useState(appointment.time || '09:30 AM');
+
+  // Partner Lab
+  const [selectedLabId, setSelectedLabId] = useState(appointment.partnerLabId || '');
+  const [selectedLabName, setSelectedLabName] = useState(appointment.partnerLabName || '');
+  const [selectedLabAddress, setSelectedLabAddress] = useState(appointment.partnerLabAddress || '');
+  const [isChangingLab, setIsChangingLab] = useState(false);
+  const [labSearch, setLabSearch] = useState('');
+  const [partnerLabs, setPartnerLabs] = useState<PartnerLab[]>([]);
+
+  // Tests & Cart
+  const initialTests: TestItemSnapshot[] = appointment.items && appointment.items.length > 0
+    ? appointment.items
+    : [{
+        testId: appointment.testId || 'test-1',
+        testCode: 'TEST',
+        testName: appointment.testName || 'Diagnostic Test',
+        price: Number(appointment.totalPrice ?? appointment.amount ?? 0),
+        partnerShare: Number(appointment.totalPartnerShare || 0),
+        agentIncentive: Number(appointment.totalAgentIncentive || 0),
+        quantity: 1,
+        lineTotal: Number(appointment.totalPrice ?? appointment.amount ?? 0),
+        instructions: 'Standard clinical preparation instructions.',
+        parameters: [],
+      }];
+
+  const [selectedTests, setSelectedTests] = useState<TestItemSnapshot[]>(initialTests);
+  const [testSearch, setTestSearch] = useState('');
+  const [allAvailableTests, setAllAvailableTests] = useState<any[]>([]);
+  const [viewingParams, setViewingParams] = useState<{ testName: string; testCode?: string; parameters: TestParameter[] } | null>(null);
+
+  // Financials
+  const [totalPrice, setTotalPrice] = useState(String(appointment.totalPrice ?? appointment.amount ?? 0));
+  const [advancePayment, setAdvancePayment] = useState(String(appointment.advancePayment ?? 0));
+  const [manualPriceOverride, setManualPriceOverride] = useState(false);
+  const [paymentCollectedBy, setPaymentCollectedBy] = useState<'Oxycare' | 'Partner'>(appointment.paymentCollectedBy || 'Oxycare');
+
+  // Operations
+  const [status, setStatus] = useState(appointment.status || 'Scheduled');
+  const [referredBy, setReferredBy] = useState(appointment.referredBy || appointment.doctor || '');
+  const [notes, setNotes] = useState(appointment.notes || '');
+  const [isSaving, setIsSaving] = useState(false);
+
+  // Load labs and tests catalog
+  useEffect(() => {
+    Promise.all([
+      fetch('/api/partner-labs').then((r) => r.json()).catch(() => []),
+      fetch('/api/tests').then((r) => r.json()).catch(() => []),
+    ]).then(([labsData, testsData]) => {
+      const activeLabs = Array.isArray(labsData) ? labsData.filter((l: any) => l.active !== false) : [];
+      setPartnerLabs(activeLabs);
+
+      const combined: any[] = [];
+      const seenNames = new Set<string>();
+
+      (Array.isArray(testsData) ? testsData : []).forEach((t: any) => {
+        const key = t.name.toLowerCase().trim();
+        if (!seenNames.has(key)) {
+          seenNames.add(key);
+          combined.push(t);
+        }
+      });
+
+      activeLabs.forEach((l: any) => {
+        (l.tests || []).forEach((lt: any) => {
+          const key = lt.name.toLowerCase().trim();
+          if (!seenNames.has(key)) {
+            seenNames.add(key);
+            combined.push({
+              id: lt.id,
+              name: lt.name,
+              testCode: lt.testCode,
+              department: lt.department || lt.category || 'Clinical Pathology',
+              price: lt.price,
+              partnerShare: lt.partnerShare,
+              agentIncentive: lt.agentIncentive,
+              instructions: lt.instructions,
+              parameters: lt.parameters || [],
+            });
+          }
+        });
+      });
+      setAllAvailableTests(combined);
+    });
+  }, []);
+
+  const handleTestsChanged = (newTests: TestItemSnapshot[]) => {
+    setSelectedTests(newTests);
+    if (!manualPriceOverride) {
+      const sum = newTests.reduce((acc, curr) => acc + Number(curr.price || 0) * Number(curr.quantity || 1), 0);
+      setTotalPrice(String(sum));
+    }
+  };
+
+  const searchedAvailableTests = useMemo(() => {
+    const q = testSearch.toLowerCase().trim();
+    if (!q) return [];
+    const chosenIds = new Set(selectedTests.map((t) => t.testId));
+    return allAvailableTests
+      .filter((t) => !chosenIds.has(t.id))
+      .filter((t) =>
+        t.name.toLowerCase().includes(q) ||
+        (t.testCode && t.testCode.toLowerCase().includes(q)) ||
+        (t.department && t.department.toLowerCase().includes(q))
+      )
+      .slice(0, 10);
+  }, [allAvailableTests, testSearch, selectedTests]);
+
+  const addTestToCart = (t: any) => {
+    const defaultParams = Array.isArray(t.parameters) && t.parameters.length > 0
+      ? t.parameters
+      : [{ name: `${t.name} Core Marker` }, { name: 'Differential Index' }];
+
+    let price = Number(t.price || 0);
+    let partnerShare = Number(t.partnerShare || 0);
+    let agentIncentive = Number(t.agentIncentive || 0);
+
+    const activeLab = partnerLabs.find((l) => l.id === selectedLabId);
+    if (activeLab && Array.isArray(activeLab.tests)) {
+      const matched = activeLab.tests.find(
+        (lt) =>
+          lt.id === t.id ||
+          (lt.testCode && lt.testCode.toLowerCase() === (t.testCode || '').toLowerCase()) ||
+          lt.name.toLowerCase() === t.name.toLowerCase()
+      );
+      if (matched) {
+        if (matched.price !== undefined) price = Number(matched.price);
+        if (matched.partnerShare !== undefined) partnerShare = Number(matched.partnerShare);
+        if (matched.agentIncentive !== undefined) agentIncentive = Number(matched.agentIncentive);
+      }
+    }
+
+    const newItem: TestItemSnapshot = {
+      testId: t.id,
+      testCode: t.testCode || `TEST-${t.id}`,
+      testName: t.name,
+      price,
+      partnerShare,
+      agentIncentive,
+      instructions: t.instructions || 'Standard clinical preparation.',
+      parameters: defaultParams,
+      quantity: 1,
+      lineTotal: price,
+    };
+
+    handleTestsChanged([...selectedTests, newItem]);
+    setTestSearch('');
+  };
+
+  const removeTestFromCart = (testId: string) => {
+    if (selectedTests.length <= 1) {
+      toast.error('At least one diagnostic test is required');
+      return;
+    }
+    handleTestsChanged(selectedTests.filter((t) => t.testId !== testId));
+  };
+
+  const updateTestPrice = (testId: string, newPrice: number) => {
+    handleTestsChanged(
+      selectedTests.map((t) => (t.testId === testId ? { ...t, price: newPrice, lineTotal: newPrice * (t.quantity || 1) } : t))
+    );
+  };
+
+  // Lab eligibility
+  const eligibleLabs = useMemo(() => {
+    const q = labSearch.toLowerCase().trim();
+
+    return partnerLabs
+      .map((lab) => {
+        const labTests = Array.isArray(lab.tests) ? lab.tests : [];
+        let matchCount = 0;
+
+        for (const st of selectedTests) {
+          const stName = st.testName.toLowerCase().trim();
+          const stCode = (st.testCode || '').toLowerCase().trim();
+
+          const matches = labTests.some((lt) => {
+            const ltName = lt.name.toLowerCase().trim();
+            const ltCode = (lt.testCode || '').toLowerCase().trim();
+            return (
+              lt.id === st.testId ||
+              (ltCode && ltCode === stCode) ||
+              ltName === stName ||
+              ltName.includes(stName) ||
+              stName.includes(ltName)
+            );
+          });
+          if (matches) matchCount++;
+        }
+
+        const conductsAll = selectedTests.length > 0 && matchCount === selectedTests.length;
+        const conductsSome = matchCount > 0;
+
+        return {
+          lab,
+          matchCount,
+          conductsAll,
+          conductsSome,
+        };
+      })
+      .filter(({ lab }) => {
+        if (q) {
+          return [lab.name, lab.address, lab.city, lab.contactPerson].some((v) =>
+            String(v || '').toLowerCase().includes(q)
+          );
+        }
+        return true;
+      })
+      .sort((a, b) => {
+        if (a.conductsAll && !b.conductsAll) return -1;
+        if (!a.conductsAll && b.conductsAll) return 1;
+        return b.matchCount - a.matchCount;
+      });
+  }, [partnerLabs, selectedTests, labSearch]);
+
+  const handleSelectLab = (lab: PartnerLab) => {
+    setSelectedLabId(lab.id);
+    setSelectedLabName(lab.name);
+    setSelectedLabAddress(lab.address);
+    setIsChangingLab(false);
+    setLabSearch('');
+
+    if (Array.isArray(lab.tests) && lab.tests.length > 0) {
+      setSelectedTests((prev) =>
+        prev.map((item) => {
+          const matchedTest = lab.tests.find(
+            (lt) =>
+              lt.id === item.testId ||
+              (lt.testCode && lt.testCode.toLowerCase() === (item.testCode || '').toLowerCase()) ||
+              lt.name.toLowerCase() === item.testName.toLowerCase()
+          );
+          if (matchedTest) {
+            return {
+              ...item,
+              partnerShare: matchedTest.partnerShare !== undefined ? Number(matchedTest.partnerShare) : item.partnerShare,
+              agentIncentive: matchedTest.agentIncentive !== undefined ? Number(matchedTest.agentIncentive) : item.agentIncentive,
+            };
+          }
+          return item;
+        })
+      );
+    }
+  };
+
+  const handleSave = async (e: FormEvent) => {
+    e.preventDefault();
+    if (!patientName.trim()) { toast.error('Patient Name is required'); return; }
+    if (!mobile.trim()) { toast.error('Mobile number is required'); return; }
+    if (selectedTests.length === 0) { toast.error('At least one test must be included'); return; }
+    if (!selectedLabId && !selectedLabName) { toast.error('Partner Lab is mandatory'); return; }
+
+    setIsSaving(true);
+    try {
+      const res = await fetch(`/api/appointments/${appointment.id}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          patientName: patientName.trim(),
+          mobile: mobile.trim(),
+          email: email.trim() || null,
+          age: Number(age) || 30,
+          gender,
+          bookingType,
+          address: bookingType === 'Home Collection' ? address : null,
+          pinCode: bookingType === 'Home Collection' ? pinCode : null,
+          collectionDate: bookingType === 'Home Collection' ? (collectionDate || date) : null,
+          timeSlot: bookingType === 'Home Collection' ? (timeSlot || time) : null,
+          date,
+          time,
+          partnerLabId: selectedLabId,
+          partnerLabName: selectedLabName,
+          partnerLabAddress: selectedLabAddress,
+          items: selectedTests,
+          totalPrice: Number(totalPrice),
+          advancePayment: Number(advancePayment),
+          paymentCollectedBy,
+          status,
+          referredBy: referredBy.trim() || null,
+          notes: notes.trim() || null,
+          updatedBy: currentUser?.name || 'Staff User',
+        }),
+      });
+
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({}));
+        throw new Error(err.error || 'Could not update appointment');
+      }
+
+      const updated = await res.json();
+      toast.success(`Appointment ${appointment.id} updated successfully!`);
+      onSaved(updated);
+      onClose();
+    } catch (err: any) {
+      toast.error(err.message || 'Failed to update appointment');
+    } finally {
+      setIsSaving(false);
+    }
+  };
+
+  const remaining = Math.max(0, Number(totalPrice) - Number(advancePayment));
+  const isDoctor = currentUser?.role === 'DOCTOR';
+  const canViewIncentive = currentUser?.role === 'ADMIN' || currentUser?.role === 'SUPER_ADMIN' || currentUser?.role === 'AGENT';
+
+  return (
+    <ModalPortal isOpen={isOpen} onClose={onClose} maxWidth="max-w-4xl">
+      <div className="flex shrink-0 items-center justify-between border-b border-border p-5 pb-4 bg-card">
+        <div>
+          <div className="flex items-center gap-2">
+            <h3 className="font-bold text-lg text-foreground flex items-center gap-2">
+              <Edit3 size={18} className="text-primary" /> Edit Appointment
+            </h3>
+            <span className="mono rounded-lg bg-primary/10 px-2 py-0.5 text-xs font-bold text-primary border border-primary/20">
+              {appointment.id}
+            </span>
+            <span className="mono text-xs text-muted-foreground">UHID: {appointment.uhid}</span>
+          </div>
+          <p className="text-xs text-muted-foreground mt-0.5">
+            Modify patient details, test investigations, assigned partner laboratory, or billing values.
+          </p>
+        </div>
+        <button
+          type="button"
+          onClick={onClose}
+          className="rounded-lg p-1.5 text-muted-foreground hover:bg-muted hover:text-foreground cursor-pointer"
+        >
+          <X size={18} />
+        </button>
+      </div>
+
+      <form onSubmit={handleSave} className="p-6 space-y-6 overflow-y-auto max-h-[80vh]">
+        {/* Section 1: Patient Information */}
+        <div className="rounded-2xl border border-border bg-card p-4 space-y-4 shadow-xs">
+          <div className="flex items-center gap-2 font-bold text-xs uppercase tracking-wider text-primary border-b border-border pb-2">
+            <UserRound size={15} /> Patient Demographic Profile
+          </div>
+          <div className="grid gap-4 sm:grid-cols-3">
+            <Field label="Patient Full Name *">
+              <Input
+                value={patientName}
+                onChange={(e) => setPatientName(e.target.value)}
+                placeholder="e.g. Ramesh Kumar"
+                required
+              />
+            </Field>
+            <Field label="Mobile Number *">
+              <Input
+                value={mobile}
+                onChange={(e) => setMobile(e.target.value)}
+                placeholder="10-digit mobile"
+                required
+              />
+            </Field>
+            <Field label="Email (Optional)">
+              <Input
+                type="email"
+                value={email}
+                onChange={(e) => setEmail(e.target.value)}
+                placeholder="patient@example.com"
+              />
+            </Field>
+            <Field label="Age (Years)">
+              <Input
+                type="number"
+                value={age}
+                onChange={(e) => setAge(e.target.value)}
+                placeholder="30"
+              />
+            </Field>
+            <Field label="Gender">
+              <Select value={gender} onChange={(e) => setGender(e.target.value)}>
+                <option value="Male">Male</option>
+                <option value="Female">Female</option>
+                <option value="Other">Other</option>
+              </Select>
+            </Field>
+            <Field label="UHID / Medical Record Number">
+              <Input value={appointment.uhid} disabled className="bg-muted text-muted-foreground font-mono" />
+            </Field>
+          </div>
+        </div>
+
+        {/* Section 2: Visit & Collection Mode */}
+        <div className="rounded-2xl border border-border bg-card p-4 space-y-4 shadow-xs">
+          <div className="flex items-center justify-between border-b border-border pb-2">
+            <div className="flex items-center gap-2 font-bold text-xs uppercase tracking-wider text-foreground">
+              <Truck size={15} className="text-amber-600" /> Visit & Sample Collection Mode
+            </div>
+            <div className="flex items-center gap-2">
+              <button
+                type="button"
+                onClick={() => setBookingType('Lab Visit')}
+                className={cx(
+                  'px-3 py-1 text-xs font-bold rounded-lg border transition-all cursor-pointer',
+                  bookingType === 'Lab Visit'
+                    ? 'bg-primary text-primary-foreground border-primary'
+                    : 'bg-muted text-muted-foreground border-border hover:text-foreground'
+                )}
+              >
+                🏥 Center / Lab Visit
+              </button>
+              <button
+                type="button"
+                onClick={() => setBookingType('Home Collection')}
+                className={cx(
+                  'px-3 py-1 text-xs font-bold rounded-lg border transition-all cursor-pointer',
+                  bookingType === 'Home Collection'
+                    ? 'bg-amber-500 text-white border-amber-600'
+                    : 'bg-muted text-muted-foreground border-border hover:text-foreground'
+                )}
+              >
+                🚐 Home Collection
+              </button>
+            </div>
+          </div>
+
+          {bookingType === 'Home Collection' ? (
+            <div className="rounded-xl border border-amber-300 bg-amber-500/10 p-4 space-y-3 text-amber-900">
+              <div className="grid gap-3 sm:grid-cols-2">
+                <Field label="Collection Date">
+                  <Input
+                    type="date"
+                    value={collectionDate}
+                    onChange={(e) => setCollectionDate(e.target.value)}
+                  />
+                </Field>
+                <Field label="Collection Time Slot">
+                  <Input
+                    value={timeSlot}
+                    onChange={(e) => setTimeSlot(e.target.value)}
+                    placeholder="e.g. 07:00 AM - 08:30 AM"
+                  />
+                </Field>
+                <div className="sm:col-span-2">
+                  <Field label="Full Home Address *">
+                    <Input
+                      value={address}
+                      onChange={(e) => setAddress(e.target.value)}
+                      placeholder="Flat, Building, Street, Landmark"
+                    />
+                  </Field>
+                </div>
+                <div>
+                  <Field label="Postal PIN Code">
+                    <Input
+                      value={pinCode}
+                      onChange={(e) => setPinCode(e.target.value)}
+                      placeholder="e.g. 122001"
+                    />
+                  </Field>
+                </div>
+              </div>
+            </div>
+          ) : (
+            <div className="grid gap-3 sm:grid-cols-2">
+              <Field label="Appointment Scheduled Date">
+                <Input type="date" value={date} onChange={(e) => setDate(e.target.value)} />
+              </Field>
+              <Field label="Appointment Time">
+                <Input value={time} onChange={(e) => setTime(e.target.value)} placeholder="09:30 AM" />
+              </Field>
+            </div>
+          )}
+        </div>
+
+        {/* Section 3: Diagnostic Tests & Investigations Cart */}
+        <div className="rounded-2xl border border-border bg-card p-4 space-y-4 shadow-xs">
+          <div className="flex items-center justify-between border-b border-border pb-2">
+            <div className="flex items-center gap-2 font-bold text-xs uppercase tracking-wider text-foreground">
+              <FlaskConical size={15} className="text-primary" /> Diagnostic Investigations ({selectedTests.length} Items)
+            </div>
+            <span className="mono text-xs text-muted-foreground">Add or remove tests dynamically</span>
+          </div>
+
+          {/* Test Search Autocomplete Input */}
+          <div className="relative">
+            <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground" size={16} />
+            <Input
+              value={testSearch}
+              onChange={(e) => setTestSearch(e.target.value)}
+              placeholder="Search tests / packages by name or code to add..."
+              className="pl-9 bg-card"
+            />
+            {searchedAvailableTests.length > 0 && (
+              <div className="absolute top-full left-0 right-0 z-30 mt-1 max-h-56 overflow-y-auto rounded-xl border border-border bg-card shadow-2xl p-1.5 space-y-1">
+                {searchedAvailableTests.map((t) => (
+                  <button
+                    key={t.id}
+                    type="button"
+                    onClick={() => addTestToCart(t)}
+                    className="flex w-full items-center justify-between rounded-lg px-3 py-2 text-xs text-left hover:bg-muted transition-colors cursor-pointer"
+                  >
+                    <div className="flex-1 pr-3">
+                      <div className="font-bold flex items-center gap-2">
+                        <span>{t.name}</span>
+                        <span className="mono text-[10px] text-muted-foreground">({t.testCode || t.id})</span>
+                      </div>
+                      <div className="text-[10px] text-muted-foreground">{t.department} · {t.instructions || 'Standard test'}</div>
+                    </div>
+                    <div className="text-right shrink-0">
+                      <div className="font-bold text-primary">{money(t.price)}</div>
+                      <div className="text-[9px] text-[#167366]">Share: {money(t.partnerShare || 0)}</div>
+                    </div>
+                  </button>
+                ))}
+              </div>
+            )}
+          </div>
+
+          {/* Cart Table */}
+          <div className="overflow-x-auto rounded-xl border border-border">
+            <table className="w-full text-left text-xs">
+              <thead className="bg-muted/45 text-[10px] uppercase font-bold text-muted-foreground">
+                <tr>
+                  <th className="px-3 py-2">Test Name & Code</th>
+                  <th className="px-3 py-2 text-right">Price (₹)</th>
+                  <th className="px-3 py-2 text-right text-[#167366]">Partner Share</th>
+                  {canViewIncentive && <th className="px-3 py-2 text-right text-[#a96816]">Agent Inc.</th>}
+                  <th className="px-3 py-2 text-center">Action</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-border">
+                {selectedTests.map((item) => (
+                  <tr key={item.testId} className="hover:bg-muted/20">
+                    <td className="px-3 py-2 font-semibold">
+                      <div>{item.testName} <span className="mono text-[10px] text-muted-foreground">({item.testCode})</span></div>
+                      {item.parameters && item.parameters.length > 0 && (
+                        <button
+                          type="button"
+                          onClick={() => setViewingParams({ testName: item.testName, testCode: item.testCode, parameters: item.parameters || [] })}
+                          className="inline-flex items-center gap-1 mt-0.5 rounded bg-primary/10 hover:bg-primary/20 px-2 py-0.5 text-[10px] font-bold text-primary transition-colors cursor-pointer"
+                        >
+                          <FlaskConical size={11} /> {item.parameters.length} Parameters
+                        </button>
+                      )}
+                    </td>
+                    <td className="px-3 py-2 text-right">
+                      <input
+                        type="number"
+                        value={item.price}
+                        onChange={(e) => updateTestPrice(item.testId, Number(e.target.value) || 0)}
+                        className="w-20 rounded border border-border px-1.5 py-0.5 text-right font-bold text-xs"
+                      />
+                    </td>
+                    <td className="px-3 py-2 text-right font-semibold text-[#167366]">
+                      {money(item.partnerShare || 0)}
+                    </td>
+                    {canViewIncentive && (
+                      <td className="px-3 py-2 text-right font-semibold text-[#a96816]">
+                        {money(item.agentIncentive || 0)}
+                      </td>
+                    )}
+                    <td className="px-3 py-2 text-center">
+                      <button
+                        type="button"
+                        onClick={() => removeTestFromCart(item.testId)}
+                        title="Remove Test"
+                        className="rounded p-1 text-destructive hover:bg-destructive/10 transition-colors cursor-pointer"
+                      >
+                        <Trash2 size={14} />
+                      </button>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </div>
+
+        {/* Section 4: Mandatory Assigned Partner Laboratory */}
+        <div className="rounded-2xl border border-border bg-card p-4 space-y-3 shadow-xs">
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-1.5 border-b border-border pb-2">
+            <div className="flex items-center gap-2">
+              <Building2 size={16} className="text-primary" />
+              <div className="flex items-center gap-2">
+                <span className="font-bold text-xs uppercase tracking-wider text-foreground">Assigned Partner Laboratory</span>
+                <span className="mono rounded bg-destructive/10 px-1.5 py-0.2 text-[9px] font-bold text-destructive">MANDATORY *</span>
+              </div>
+            </div>
+            {selectedLabName && (
+              <span className="mono flex items-center gap-1 rounded-lg bg-[#e5f5f1] px-2.5 py-0.5 text-xs font-bold text-[#167366] border border-[#bce4db] w-fit">
+                <CheckCircle2 size={13} /> {selectedLabName}
+              </span>
+            )}
+          </div>
+
+          {selectedLabName && !isChangingLab ? (
+            <div className="flex items-center justify-between rounded-xl border border-primary/30 bg-primary/5 p-3 shadow-xs">
+              <div className="flex items-center gap-3 min-w-0">
+                <div className="grid size-9 place-items-center rounded-xl bg-primary text-primary-foreground shrink-0 shadow-xs">
+                  <Building2 size={18} />
+                </div>
+                <div className="min-w-0">
+                  <div className="flex items-center gap-2 flex-wrap">
+                    <span className="font-bold text-sm text-foreground">{selectedLabName}</span>
+                    <span className="mono rounded bg-[#e5f5f1] text-[#167366] px-2 py-0.5 text-[10px] font-bold border border-[#bce4db]">
+                      Assigned Lab
+                    </span>
+                  </div>
+                  <div className="text-xs text-muted-foreground mt-0.5 truncate">
+                    📍 {selectedLabAddress}
+                  </div>
+                </div>
+              </div>
+              <Button
+                type="button"
+                variant="secondary"
+                className="h-8 text-xs font-semibold gap-1 shrink-0 ml-3 bg-card hover:bg-muted"
+                onClick={() => { setIsChangingLab(true); setLabSearch(''); }}
+              >
+                <Edit3 size={13} /> Change Lab
+              </Button>
+            </div>
+          ) : (
+            <div className="relative">
+              <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground" size={16} />
+              <Input
+                value={labSearch}
+                onChange={(e) => setLabSearch(e.target.value)}
+                placeholder="Search partner labs offering chosen tests..."
+                className="pl-9 bg-card"
+                autoFocus={isChangingLab}
+              />
+              <div className="mt-1.5 max-h-52 overflow-y-auto rounded-xl border border-border bg-card shadow-2xl p-1.5 space-y-1">
+                {eligibleLabs.length === 0 ? (
+                  <div className="p-3 text-center text-xs text-muted-foreground">
+                    No partner labs found matching "{labSearch}".
+                  </div>
+                ) : (
+                  eligibleLabs.map(({ lab, conductsAll, matchCount }) => (
+                    <button
+                      key={lab.id}
+                      type="button"
+                      onClick={() => handleSelectLab(lab)}
+                      className={cx(
+                        'flex w-full items-center justify-between rounded-lg p-2.5 text-left text-xs transition-colors hover:bg-muted/70 cursor-pointer',
+                        selectedLabId === lab.id ? 'bg-primary/10 border border-primary/30' : ''
+                      )}
+                    >
+                      <div>
+                        <div className="font-bold text-foreground flex items-center gap-2">
+                          {lab.name}
+                          {lab.city && <span className="mono text-[10px] rounded bg-muted px-1.5 py-0.2 text-muted-foreground">{lab.city}</span>}
+                        </div>
+                        <div className="text-[11px] text-muted-foreground flex items-center gap-1 mt-0.5">
+                          <MapPin size={11} className="shrink-0" /> {lab.address}
+                        </div>
+                      </div>
+                      <div className="text-right shrink-0">
+                        {conductsAll ? (
+                          <span className="mono rounded bg-[#e5f5f1] text-[#167366] border border-[#bce4db] px-2 py-0.5 text-[10px] font-bold">
+                            ✓ Offers All Tests
+                          </span>
+                        ) : matchCount > 0 ? (
+                          <span className="mono rounded bg-amber-100 text-amber-800 border border-amber-300 px-2 py-0.5 text-[10px] font-bold">
+                            Offers {matchCount}/{selectedTests.length} Tests
+                          </span>
+                        ) : (
+                          <span className="mono rounded bg-muted text-muted-foreground px-2 py-0.5 text-[10px]">
+                            Partner Lab
+                          </span>
+                        )}
+                      </div>
+                    </button>
+                  ))
+                )}
+              </div>
+              {isChangingLab && selectedLabName && (
+                <div className="mt-1.5 flex justify-end">
+                  <button
+                    type="button"
+                    onClick={() => setIsChangingLab(false)}
+                    className="text-xs text-muted-foreground hover:text-foreground font-semibold hover:underline cursor-pointer"
+                  >
+                    Keep current lab ({selectedLabName})
+                  </button>
+                </div>
+              )}
+            </div>
+          )}
+        </div>
+
+        {/* Section 5: Financials & Payment Collection Channel */}
+        <div className="rounded-2xl border border-border bg-card p-4 space-y-4 shadow-xs">
+          <div className="flex items-center justify-between border-b border-border pb-2">
+            <div className="flex items-center gap-2 font-bold text-xs uppercase tracking-wider text-foreground">
+              <CircleDollarSign size={15} className="text-emerald-600" /> Financial Settlement & Payment Status
+            </div>
+            <label className="flex items-center gap-1.5 text-xs text-muted-foreground cursor-pointer">
+              <input
+                type="checkbox"
+                checked={manualPriceOverride}
+                onChange={(e) => setManualPriceOverride(e.target.checked)}
+                className="rounded text-primary"
+              />
+              <span>Manual Price Override</span>
+            </label>
+          </div>
+
+          <div className="grid gap-4 sm:grid-cols-3">
+            <Field label="Total Price (₹)">
+              <Input
+                type="number"
+                value={totalPrice}
+                onChange={(e) => {
+                  setTotalPrice(e.target.value);
+                  setManualPriceOverride(true);
+                }}
+                required
+              />
+            </Field>
+            <Field label="Advance Payment (₹)">
+              <Input
+                type="number"
+                value={advancePayment}
+                onChange={(e) => setAdvancePayment(e.target.value)}
+              />
+            </Field>
+            <Field label="Remaining Due Balance">
+              <div className="flex h-10 items-center rounded-xl border border-border bg-muted/40 px-3 font-mono font-bold text-sm">
+                <span className={remaining > 0 ? 'text-amber-700' : 'text-[#167366]'}>
+                  {money(remaining)}
+                </span>
+                <span className="ml-auto text-[10px] text-muted-foreground font-sans">
+                  {remaining > 0 ? 'Partial/Pending' : 'Settled'}
+                </span>
+              </div>
+            </Field>
+          </div>
+
+          <div className="rounded-xl border border-border bg-muted/30 p-3 space-y-2 text-xs">
+            <div className="font-semibold text-foreground">Who collects the patient fee?</div>
+            <div className="grid gap-2 sm:grid-cols-2">
+              <label
+                className={cx(
+                  'flex items-center gap-2 rounded-lg border p-2.5 cursor-pointer transition-all',
+                  paymentCollectedBy === 'Oxycare'
+                    ? 'border-primary bg-primary/10 text-primary font-bold'
+                    : 'border-border bg-card text-muted-foreground hover:bg-muted'
+                )}
+              >
+                <input
+                  type="radio"
+                  name="paymentCollectedBy"
+                  checked={paymentCollectedBy === 'Oxycare'}
+                  onChange={() => setPaymentCollectedBy('Oxycare')}
+                  className="text-primary"
+                />
+                <div>
+                  <div className="font-bold">Oxycare Diagnostics (Center Account)</div>
+                  <div className="text-[10px] text-muted-foreground">Collected directly at Oxycare frontdesk / online</div>
+                </div>
+              </label>
+              <label
+                className={cx(
+                  'flex items-center gap-2 rounded-lg border p-2.5 cursor-pointer transition-all',
+                  paymentCollectedBy === 'Partner'
+                    ? 'border-[#167366] bg-[#e5f5f1] text-[#167366] font-bold'
+                    : 'border-border bg-card text-muted-foreground hover:bg-muted'
+                )}
+              >
+                <input
+                  type="radio"
+                  name="paymentCollectedBy"
+                  checked={paymentCollectedBy === 'Partner'}
+                  onChange={() => setPaymentCollectedBy('Partner')}
+                  className="text-[#167366]"
+                />
+                <div>
+                  <div className="font-bold">Partner Laboratory (Partner Account)</div>
+                  <div className="text-[10px] text-muted-foreground">Collected by outsourced laboratory</div>
+                </div>
+              </label>
+            </div>
+          </div>
+        </div>
+
+        {/* Section 6: Operational Lifecycle & Clinical Referral */}
+        <div className="rounded-2xl border border-border bg-card p-4 space-y-4 shadow-xs">
+          <div className="flex items-center gap-2 font-bold text-xs uppercase tracking-wider text-foreground border-b border-border pb-2">
+            <CalendarDays size={15} className="text-primary" /> Lifecycle Status & Clinical Referral
+          </div>
+          <div className="grid gap-4 sm:grid-cols-2">
+            <Field label="Operational Status">
+              <Select value={status} onChange={(e) => setStatus(e.target.value)}>
+                <option value="Scheduled">Scheduled</option>
+                <option value="Confirmed">Confirmed</option>
+                <option value="Patient Arrived">Patient Arrived</option>
+                <option value="Sample Collected">Sample Collected</option>
+                <option value="In Process">In Process</option>
+                <option value="Report Ready">Report Ready</option>
+                <option value="Completed">Completed</option>
+                <option value="Pending Payment">Pending Payment</option>
+                <option value="Cancelled">Cancelled</option>
+              </Select>
+            </Field>
+            <Field label="Referring Doctor / Agent / Hospital">
+              <Input
+                value={referredBy}
+                onChange={(e) => setReferredBy(e.target.value)}
+                placeholder="e.g. Dr. A. Sharma / Self"
+              />
+            </Field>
+            <div className="sm:col-span-2">
+              <Field label="Clinical Notes / Special Patient Instructions">
+                <Input
+                  value={notes}
+                  onChange={(e) => setNotes(e.target.value)}
+                  placeholder="e.g. Fasting 12 hrs required, Diabetic patient"
+                />
+              </Field>
+            </div>
+          </div>
+        </div>
+
+        {/* Modal Footer */}
+        <div className="flex items-center justify-end gap-3 pt-3 border-t border-border">
+          <Button type="button" variant="secondary" onClick={onClose} disabled={isSaving}>
+            Cancel
+          </Button>
+          <Button type="submit" disabled={isSaving} className="gap-1.5">
+            {isSaving ? (
+              <>
+                <RefreshCw size={14} className="animate-spin" /> Saving Changes...
+              </>
+            ) : (
+              <>
+                <Check size={14} /> Save Appointment Changes
+              </>
+            )}
+          </Button>
+        </div>
+      </form>
+
+      {/* Test Parameters Inspect Modal inside Editor */}
+      {viewingParams && (
+        <ModalPortal isOpen={!!viewingParams} onClose={() => setViewingParams(null)} maxWidth="max-w-lg">
+          <div className="flex shrink-0 items-center justify-between border-b border-border p-5 pb-3 bg-card">
+            <h3 className="font-bold text-base text-foreground flex items-center gap-2">
+              <FlaskConical size={18} className="text-primary" />
+              <span>{viewingParams.testName} Parameters</span>
+            </h3>
+            <button type="button" onClick={() => setViewingParams(null)} className="rounded-lg p-1 text-muted-foreground hover:bg-muted">
+              <X size={16} />
+            </button>
+          </div>
+          <div className="p-5 space-y-2 max-h-72 overflow-y-auto">
+            {viewingParams.parameters.map((p, idx) => (
+              <div key={idx} className="flex justify-between items-center text-xs p-2 rounded-lg border border-border bg-muted/20">
+                <span className="font-semibold">{p.name}</span>
+                <span className="mono text-muted-foreground">{p.normalRange ? `Ref: ${p.normalRange}` : 'Standard'}</span>
+              </div>
+            ))}
+          </div>
+        </ModalPortal>
+      )}
+    </ModalPortal>
   );
 }
 
@@ -1486,6 +2426,7 @@ function AppointmentDetailPage({ params, currentUser }: { params: { id: string }
   const [uploadingDoc, setUploadingDoc] = useState<'prescription' | 'invoice' | 'report' | null>(null);
   const [fileName, setFileName] = useState('');
   const [viewingParams, setViewingParams] = useState<{ testName: string; testCode?: string; parameters: TestParameter[] } | null>(null);
+  const [showEditModal, setShowEditModal] = useState(false);
 
   const [date, setDate] = useState('');
   const [time, setTime] = useState('');
@@ -1606,6 +2547,14 @@ function AppointmentDetailPage({ params, currentUser }: { params: { id: string }
           <Button variant="secondary" className="gap-1.5"><ArrowLeft size={16} /> Back to Appointments Queue</Button>
         </Link>
         <div className="flex items-center gap-3">
+          <Button
+            type="button"
+            variant="secondary"
+            onClick={() => setShowEditModal(true)}
+            className="gap-1.5 border border-primary/30 bg-primary/10 text-primary hover:bg-primary hover:text-primary-foreground font-bold cursor-pointer"
+          >
+            <Edit3 size={15} /> Edit Appointment
+          </Button>
           {isHomeColl && (
             <span className="mono flex items-center gap-1 rounded-xl bg-amber-100 px-3 py-1 text-xs font-bold text-amber-800 border border-amber-300">
               <Truck size={14} /> Home Collection Booking
@@ -1776,7 +2725,17 @@ function AppointmentDetailPage({ params, currentUser }: { params: { id: string }
         {/* Right Sidebar */}
         <div className="space-y-6">
           <Panel className="p-6">
-            <h2 className="text-lg font-bold mb-4">Edit Appointment Info</h2>
+            <div className="flex items-center justify-between mb-4">
+              <h2 className="text-lg font-bold">Quick Edit Info</h2>
+              <Button
+                type="button"
+                variant="secondary"
+                className="gap-1 h-8 px-2.5 text-xs font-bold text-primary border border-primary/30 bg-primary/10 hover:bg-primary/20 cursor-pointer"
+                onClick={() => setShowEditModal(true)}
+              >
+                <Edit3 size={13} /> Full Editor
+              </Button>
+            </div>
             <form onSubmit={handleUpdate} className="space-y-4">
               <Field label="Appointment Date">
                 <Input type="date" value={date} onChange={(e) => setDate(e.target.value)} />
@@ -1909,6 +2868,19 @@ function AppointmentDetailPage({ params, currentUser }: { params: { id: string }
           </div>
         </form>
       </ModalPortal>
+      {/* Full Edit Appointment Modal */}
+      {showEditModal && (
+        <EditAppointmentModal
+          isOpen={showEditModal}
+          appointment={apt}
+          onClose={() => setShowEditModal(false)}
+          onSaved={(updated) => {
+            setApt(updated);
+            loadAppointment();
+          }}
+          currentUser={currentUser}
+        />
+      )}
     </>
   );
 }
@@ -1926,6 +2898,7 @@ function Appointments({ currentUser }: { currentUser: UserAccount }) {
   const [showAdvanced, setShowAdvanced] = useState(false);
   const [exporting, setExporting] = useState(false);
   const [page, setPage] = useState(1);
+  const [editingAppointment, setEditingAppointment] = useState<ExtendedAppointment | null>(null);
 
   // Fetch unique test names for filter dropdown
   const [testNames, setTestNames] = useState<string[]>([]);
@@ -2130,10 +3103,26 @@ function Appointments({ currentUser }: { currentUser: UserAccount }) {
           <span className="w-[120px]">Total & Adv</span>
           <span className="w-[110px]">Remaining</span>
           <span className="w-[130px]">Inline Status</span>
-          <span className="w-[80px]">Actions</span>
+          <span className="w-[130px]">Actions</span>
         </div>
         <QueryState loading={query.isLoading} error={!!query.error} retry={() => query.refetch()}>
-          {items.length ? items.map((appointment) => <AppointmentRow appointment={appointment} key={appointment.id} onChange={refreshData} canChangeStatus={canChangeStatus} />) : <EmptyState icon={CalendarDays} title="No appointments match search" detail={currentUser.role === 'DOCTOR' ? 'No appointments assigned to you.' : 'Try a wider search or clear filters.'} />}
+          {items.length ? (
+            items.map((appointment) => (
+              <AppointmentRow
+                appointment={appointment}
+                key={appointment.id}
+                onChange={refreshData}
+                onEdit={(apt) => setEditingAppointment(apt)}
+                canChangeStatus={canChangeStatus}
+              />
+            ))
+          ) : (
+            <EmptyState
+              icon={CalendarDays}
+              title="No appointments match search"
+              detail={currentUser.role === 'DOCTOR' ? 'No appointments assigned to you.' : 'Try a wider search or clear filters.'}
+            />
+          )}
         </QueryState>
       </div>
       <div className="flex items-center justify-between border-t border-border px-5 py-3">
@@ -2144,6 +3133,20 @@ function Appointments({ currentUser }: { currentUser: UserAccount }) {
         </div>
       </div>
     </Panel>
+
+    {/* Full Edit Appointment Modal from Queue */}
+    {editingAppointment && (
+      <EditAppointmentModal
+        isOpen={!!editingAppointment}
+        appointment={editingAppointment}
+        onClose={() => setEditingAppointment(null)}
+        onSaved={() => {
+          setEditingAppointment(null);
+          refreshData();
+        }}
+        currentUser={currentUser}
+      />
+    )}
   </>;
 }
 

@@ -1763,8 +1763,39 @@ router.patch("/appointments/:id", async (req, res) => {
   if (!item) return res.status(404).json({ error: "Appointment not found." });
 
   const body = req.body;
-  const totalPrice = Number(body.totalPrice ?? item.totalPrice ?? item.amount ?? 0);
-  const advancePayment = Number(body.advancePayment ?? item.advancePayment ?? 0);
+
+  // Sync patient details if patient record exists
+  if (item.patientId && (body.patientName || body.mobile || body.age !== undefined || body.gender || body.email !== undefined)) {
+    const pat = await record("patient", String(item.patientId));
+    if (pat) {
+      const updatedPatient = {
+        ...pat,
+        ...(body.patientName ? { name: body.patientName } : {}),
+        ...(body.mobile ? { mobile: body.mobile, whatsapp: body.mobile } : {}),
+        ...(body.age !== undefined ? { age: Number(body.age) } : {}),
+        ...(body.gender ? { gender: body.gender } : {}),
+        ...(body.email !== undefined ? { email: body.email } : {}),
+        ...(body.address ? { address: body.address } : {}),
+      };
+      await save("patient", updatedPatient);
+    }
+  }
+
+  // Handle items and calculation if items are updated
+  let calculatedPartnerShare = item.totalPartnerShare || 0;
+  let calculatedAgentIncentive = item.totalAgentIncentive || 0;
+  let itemsTotal = 0;
+  let derivedTestName = item.testName;
+
+  if (Array.isArray(body.items) && body.items.length > 0) {
+    calculatedPartnerShare = body.items.reduce((acc: number, curr: any) => acc + (Number(curr.partnerShare || 0) * Number(curr.quantity || 1)), 0);
+    calculatedAgentIncentive = body.items.reduce((acc: number, curr: any) => acc + (Number(curr.agentIncentive || 0) * Number(curr.quantity || 1)), 0);
+    itemsTotal = body.items.reduce((acc: number, curr: any) => acc + (Number(curr.price || 0) * Number(curr.quantity || 1)), 0);
+    derivedTestName = body.items.map((i: any) => i.testName).filter(Boolean).join(", ");
+  }
+
+  const totalPrice = Number(body.totalPrice !== undefined ? body.totalPrice : (itemsTotal > 0 ? itemsTotal : (item.totalPrice ?? item.amount ?? 0)));
+  const advancePayment = Number(body.advancePayment !== undefined ? body.advancePayment : (item.advancePayment ?? 0));
   const remainingAmount = Math.max(0, totalPrice - advancePayment);
   const paymentStatus = advancePayment >= totalPrice ? "Paid" : advancePayment > 0 ? "Partial" : "Pending";
 
@@ -1775,12 +1806,15 @@ router.patch("/appointments/:id", async (req, res) => {
     advancePayment,
     remainingAmount,
     amount: totalPrice,
+    totalPartnerShare: body.totalPartnerShare !== undefined ? Number(body.totalPartnerShare) : calculatedPartnerShare,
+    totalAgentIncentive: body.totalAgentIncentive !== undefined ? Number(body.totalAgentIncentive) : calculatedAgentIncentive,
+    testName: body.testName || derivedTestName,
     paymentStatus: body.paymentStatus || paymentStatus,
     updatedAt: new Date().toISOString(),
   };
 
   await save("appointment", updated);
-  await logAudit("Ops Staff", "FRONTDESK", "EDIT_APPOINTMENT", "appointment", req.params.id, updated);
+  await logAudit(String(body.updatedBy || "Ops Staff"), "FRONTDESK", "EDIT_APPOINTMENT", "appointment", req.params.id, updated);
   return res.json(updated);
 });
 
