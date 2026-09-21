@@ -1392,6 +1392,91 @@ router.delete("/partner-labs/:id/tests/:testId", async (req, res) => {
   return res.json({ success: true, lab: updatedLab });
 });
 
+// Bulk CSV Upload of tests into a single partner lab's catalogue (insert/update by Test Code or Name)
+router.post("/partner-labs/:id/tests/bulk-upload", async (req, res) => {
+  const lab: any = await record("partner_lab", req.params.id);
+  if (!lab) return res.status(404).json({ error: "Partner lab not found." });
+
+  const { rows } = req.body;
+  if (!Array.isArray(rows) || rows.length === 0) {
+    return res.status(400).json({ error: "No rows provided for bulk test upload." });
+  }
+
+  const existingTests: any[] = Array.isArray(lab.tests) ? [...lab.tests] : [];
+  let imported = 0;
+  let updated = 0;
+  let failed = 0;
+  const errors: { row: number; error: string }[] = [];
+
+  for (let i = 0; i < rows.length; i++) {
+    const row = rows[i];
+    const rowNum = i + 1;
+
+    try {
+      const name = String(row.name || row["Test Name"] || "").trim();
+      const testCode = String(row.testCode || row["Test Code"] || "").trim();
+      const priceNum = Number(row.price || row["Price"] || row["MRP"]);
+      const b2bCostNum = Number(row.b2bCost || row["B2B Cost"] || row["Lab Cost"] || 0);
+      const partnerShareNum = Number(row.partnerShare || row["Partner Share"] || 0);
+      const agentIncentiveNum = Number(row.agentIncentive || row["Agent Incentive"] || 0);
+      const category = String(row.category || row["Category"] || "").trim();
+      const turnaround = String(row.turnaround || row["Turnaround"] || row["TAT"] || "").trim();
+      const sampleType = String(row.sampleType || row["Sample Type"] || "").trim();
+      const instructionsText = String(row.instructions || row["Instructions"] || "").trim();
+
+      if (!name) throw new Error("Test Name is required");
+      if (isNaN(priceNum) || priceNum <= 0) throw new Error("Valid positive price is required");
+
+      const existingIndex = existingTests.findIndex((t: any) =>
+        (testCode && String(t.testCode).toLowerCase() === testCode.toLowerCase()) ||
+        String(t.name).toLowerCase() === name.toLowerCase()
+      );
+
+      if (existingIndex !== -1) {
+        existingTests[existingIndex] = {
+          ...existingTests[existingIndex],
+          price: priceNum,
+          b2bCost: isNaN(b2bCostNum) ? existingTests[existingIndex].b2bCost : b2bCostNum,
+          partnerShare: isNaN(partnerShareNum) ? existingTests[existingIndex].partnerShare : partnerShareNum,
+          agentIncentive: isNaN(agentIncentiveNum) ? existingTests[existingIndex].agentIncentive : agentIncentiveNum,
+          category: category || existingTests[existingIndex].category,
+          turnaround: turnaround || existingTests[existingIndex].turnaround,
+          sampleType: sampleType || existingTests[existingIndex].sampleType,
+          instructions: instructionsText || existingTests[existingIndex].instructions,
+          updatedAt: new Date().toISOString(),
+        };
+        updated++;
+      } else {
+        existingTests.push({
+          id: `plt-${uid("test")}`,
+          name,
+          testCode: testCode || `${name.slice(0, 3).toUpperCase()}-01`,
+          category: category || "Pathology",
+          price: priceNum,
+          b2bCost: isNaN(b2bCostNum) ? 0 : b2bCostNum,
+          partnerShare: isNaN(partnerShareNum) ? 0 : partnerShareNum,
+          agentIncentive: isNaN(agentIncentiveNum) ? 0 : agentIncentiveNum,
+          turnaround: turnaround || "Same Day",
+          sampleType: sampleType || "Blood",
+          instructions: instructionsText || "Standard preparation",
+          parameters: [],
+          active: true,
+          addedAt: new Date().toISOString(),
+        });
+        imported++;
+      }
+    } catch (err: any) {
+      failed++;
+      errors.push({ row: rowNum, error: err.message || "Failed to process row" });
+    }
+  }
+
+  const updatedLab = { ...lab, tests: existingTests, updatedAt: new Date().toISOString() };
+  await save("partner_lab", updatedLab);
+  await logAudit("Super Admin", "SUPER_ADMIN", "BULK_UPLOAD_PARTNER_LAB_TESTS", "partner_lab", String(lab.id), { total: rows.length, imported, updated, failed });
+  return res.json({ totalRows: rows.length, imported, updated, failed, errors, lab: updatedLab });
+});
+
 // Dashboard Summary
 router.get("/dashboard/summary", async (_req, res) => {
   const appointments = await records("appointment");
@@ -1463,12 +1548,13 @@ router.get("/appointments/export-csv", async (req, res) => {
   let items = await records("appointment");
   items = filterAppointments(items, req.query);
 
-  const headers = ["ID", "Date", "Time", "Patient Name", "UHID", "Mobile", "Test Name", "Lab", "Status", "Payment Status", "Total Price", "Advance", "Remaining", "Booking Type", "Source", "Referred By", "Doctor", "Address", "PIN Code", "Created By"];
+  const headers = ["ID", "Date", "Time", "Patient Name", "UHID", "Mobile", "Test Name", "Lab", "Status", "Payment Status", "Subtotal", "Discount", "Total Price", "Advance", "Remaining", "Booking Type", "Source", "Referred By", "Doctor", "Address", "PIN Code", "Created By"];
   const csvRows = [headers.join(",")];
   for (const a of items) {
     const row = [
       a.id, a.date, a.time, `"${a.patientName || ""}"`, a.uhid, a.mobile,
       `"${a.testName || ""}"`, `"${a.lab || a.branch || ""}"`, a.status, a.paymentStatus,
+      a.subtotal ?? a.totalPrice ?? a.amount, a.discount ?? 0,
       a.totalPrice ?? a.amount, a.advancePayment ?? 0,
       a.remainingAmount ?? Math.max(0, Number(a.totalPrice ?? a.amount ?? 0) - Number(a.advancePayment ?? 0)),
       a.bookingType || "Lab Visit", a.source || "Direct",
@@ -1607,7 +1693,14 @@ router.post("/appointments", async (req, res) => {
     slot = newSlot;
   }
 
-  const totalPrice = Number(body.totalPrice ?? calculatedTotal);
+  const subtotal = calculatedTotal;
+  const discountType = body.discountType === "percent" ? "percent" : "flat";
+  const discountValue = Math.max(0, Number(body.discountValue ?? body.discount ?? 0));
+  const discount = discountType === "percent"
+    ? Math.min(subtotal, Math.round((subtotal * Math.min(discountValue, 100)) / 100))
+    : Math.min(subtotal, discountValue);
+  const discountReason = body.discountReason ? String(body.discountReason).trim() : null;
+  const totalPrice = Number(body.totalPrice ?? Math.max(0, subtotal - discount));
   const advancePayment = Number(body.advancePayment ?? 0);
   const remainingAmount = Math.max(0, totalPrice - advancePayment);
   const paymentStatus = advancePayment >= totalPrice ? "Paid" : advancePayment > 0 ? "Partial" : "Pending";
@@ -1638,6 +1731,11 @@ router.post("/appointments", async (req, res) => {
     paymentCollectedBy,
     reportStatus: "Pending",
     amount: totalPrice,
+    subtotal,
+    discount,
+    discountType,
+    discountValue,
+    discountReason,
     totalPrice,
     advancePayment,
     remainingAmount,

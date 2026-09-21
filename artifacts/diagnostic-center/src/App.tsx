@@ -107,6 +107,11 @@ interface ExtendedAppointment {
   paymentCollectedBy?: 'Oxycare' | 'Partner';
   reportStatus?: string;
   amount: number;
+  subtotal?: number;
+  discount?: number;
+  discountType?: 'flat' | 'percent';
+  discountValue?: number;
+  discountReason?: string | null;
   totalPrice?: number;
   advancePayment?: number;
   remainingAmount?: number;
@@ -1460,6 +1465,12 @@ function AppointmentRow({
 
         <div className="w-[120px] shrink-0 text-xs">
           <div className="mono font-bold text-foreground">{money(totalPrice)}</div>
+          {Number(appointment.discount || 0) > 0 && (
+            <div className="mt-0.5 text-[10px] font-semibold text-[#a96816]" title={appointment.discountReason || undefined}>
+              Discount: -{money(appointment.discount!)}
+              {appointment.discountType === 'percent' && appointment.discountValue ? ` (${appointment.discountValue}%)` : ''}
+            </div>
+          )}
           <div className="mt-0.5 text-[10px] text-muted-foreground">Adv: {money(advancePayment)}</div>
           <div className="mt-1">
             <span className={cx(
@@ -3866,6 +3877,9 @@ function NewAppointment({ currentUser }: { currentUser: UserAccount }) {
   const [referredBy, setReferredBy] = useState(currentUser.role === 'AGENT' ? currentUser.name : '');
   const [source, setSource] = useState(currentUser.role === 'AGENT' ? 'Referral Agent' : 'Walk-in');
   const [advancePayment, setAdvancePayment] = useState('0');
+  const [discount, setDiscount] = useState('0');
+  const [discountType, setDiscountType] = useState<'flat' | 'percent'>('flat');
+  const [discountReason, setDiscountReason] = useState('');
   const [notes, setNotes] = useState('');
   const [submitting, setSubmitting] = useState(false);
 
@@ -4084,7 +4098,12 @@ function NewAppointment({ currentUser }: { currentUser: UserAccount }) {
   const totalMRP = selectedTests.reduce((sum, item) => sum + (item.lineTotal || item.price * item.quantity), 0);
   const totalPartnerShare = selectedTests.reduce((sum, item) => sum + (item.partnerShare * item.quantity), 0);
   const totalAgentIncentive = selectedTests.reduce((sum, item) => sum + (item.agentIncentive * item.quantity), 0);
-  const remainingBalance = Math.max(0, totalMRP - (Number(advancePayment) || 0));
+  const discountInputNum = Math.max(0, Number(discount) || 0);
+  const discountAmount = discountType === 'percent'
+    ? Math.min(totalMRP, Math.round((totalMRP * Math.min(discountInputNum, 100)) / 100))
+    : Math.min(totalMRP, discountInputNum);
+  const netPayable = Math.max(0, totalMRP - discountAmount);
+  const remainingBalance = Math.max(0, netPayable - (Number(advancePayment) || 0));
 
   useEffect(() => {
     if (!bookingDate) return;
@@ -4130,7 +4149,11 @@ function NewAppointment({ currentUser }: { currentUser: UserAccount }) {
         doctor: doctor || null,
         referredBy: referredBy || doctor || currentUser.name,
         source: isHomeCollection ? 'Home Collection' : source,
-        totalPrice: totalMRP,
+        totalPrice: netPayable,
+        discount: discountAmount,
+        discountType,
+        discountValue: discountInputNum,
+        discountReason: discountAmount > 0 ? discountReason || null : null,
         advancePayment: Number(advancePayment),
         remainingAmount: remainingBalance,
         paymentCollectedBy,
@@ -4702,6 +4725,60 @@ function NewAppointment({ currentUser }: { currentUser: UserAccount }) {
                 </div>
               </div>
 
+              <div className="grid gap-3 sm:grid-cols-2 pt-3 border-t border-border">
+                <Field label="Discount">
+                  <div className="flex gap-1.5">
+                    <Input
+                      type="number"
+                      min={0}
+                      max={discountType === 'percent' ? 100 : totalMRP}
+                      value={discount}
+                      onChange={(e) => setDiscount(e.target.value)}
+                      className="flex-1"
+                    />
+                    <div className="flex shrink-0 rounded-xl border border-input overflow-hidden">
+                      <button
+                        type="button"
+                        onClick={() => setDiscountType('flat')}
+                        className={cx(
+                          'px-3 text-xs font-bold transition-colors',
+                          discountType === 'flat' ? 'bg-primary text-primary-foreground' : 'bg-card text-muted-foreground hover:bg-muted'
+                        )}
+                      >
+                        ₹
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setDiscountType('percent')}
+                        className={cx(
+                          'px-3 text-xs font-bold transition-colors border-l border-input',
+                          discountType === 'percent' ? 'bg-primary text-primary-foreground' : 'bg-card text-muted-foreground hover:bg-muted'
+                        )}
+                      >
+                        %
+                      </button>
+                    </div>
+                  </div>
+                </Field>
+                <Field label="Discount Reason (optional)">
+                  <Input
+                    value={discountReason}
+                    onChange={(e) => setDiscountReason(e.target.value)}
+                    placeholder="e.g. Loyalty discount, Camp offer..."
+                    disabled={discountAmount <= 0}
+                  />
+                </Field>
+              </div>
+
+              {discountAmount > 0 && (
+                <div className="flex items-center justify-between rounded-xl border border-[#f5dfb8] bg-[#fff2dd] px-3 py-2 text-[#a96816]">
+                  <span className="text-xs font-bold">
+                    Net Payable After Discount ({discountType === 'percent' ? `${discountInputNum}% = ${money(discountAmount)}` : money(discountAmount)} off)
+                  </span>
+                  <span className="mono text-base font-bold">{money(netPayable)}</span>
+                </div>
+              )}
+
               <div className="grid gap-3 sm:grid-cols-2 pt-2 border-t border-border">
                 <Field label="Advance Payment Received (₹)">
                   <Input type="number" value={advancePayment} onChange={(e) => setAdvancePayment(e.target.value)} />
@@ -4778,7 +4855,7 @@ function NewAppointment({ currentUser }: { currentUser: UserAccount }) {
                   </span>
                 </div>
                 <div className="text-foreground/80 italic font-sans leading-relaxed pt-0.5">
-                  "Namaste {patientMode === 'registered' ? (selectedPatientObj?.name || 'Patient') : (customName || 'Patient')}! Your diagnostic booking for {selectedTests.map((t) => t.testName).join(', ') || 'selected tests'} on {bookingDate} is confirmed at Oxycare Diagnostics ({isHomeCollection ? 'Home Collection' : 'Lab Visit'}). Total MRP: {money(totalMRP)}, Advance Paid: {money(Number(advancePayment))}, Balance: {money(remainingBalance)}. Payment Collection: {paymentCollectedBy === 'Partner' ? 'Handled by Partner' : 'Collected by Oxycare Diagnostics'}. We look forward to serving you."
+                  "Namaste {patientMode === 'registered' ? (selectedPatientObj?.name || 'Patient') : (customName || 'Patient')}! Your diagnostic booking for {selectedTests.map((t) => t.testName).join(', ') || 'selected tests'} on {bookingDate} is confirmed at Oxycare Diagnostics ({isHomeCollection ? 'Home Collection' : 'Lab Visit'}). {discountAmount > 0 ? `Total MRP: ${money(totalMRP)}, Discount: ${money(discountAmount)}, Net Payable: ${money(netPayable)}` : `Total: ${money(netPayable)}`}, Advance Paid: {money(Number(advancePayment))}, Balance: {money(remainingBalance)}. Payment Collection: {paymentCollectedBy === 'Partner' ? 'Handled by Partner' : 'Collected by Oxycare Diagnostics'}. We look forward to serving you."
                 </div>
               </div>
             )}
@@ -4786,7 +4863,7 @@ function NewAppointment({ currentUser }: { currentUser: UserAccount }) {
 
           <div className="flex justify-end gap-2 pt-3">
             <Button type="button" variant="secondary" onClick={() => navigate('/appointments')}>Cancel</Button>
-            <Button type="submit" disabled={submitting}>{submitting ? 'Creating Booking...' : `Confirm Booking (${selectedTests.length} Tests — ${money(totalMRP)})`}</Button>
+            <Button type="submit" disabled={submitting}>{submitting ? 'Creating Booking...' : `Confirm Booking (${selectedTests.length} Tests — ${money(netPayable)})`}</Button>
           </div>
         </form>
       </Panel>
@@ -5442,6 +5519,7 @@ function PartnerLabs({ currentUser }: { currentUser: UserAccount }) {
   const [editingTest, setEditingTest] = useState<PartnerLabTest | null>(null);
   const [deleteTest, setDeleteTest] = useState<PartnerLabTest | null>(null);
   const [deletingTest, setDeletingTest] = useState(false);
+  const [showLabBulkUpload, setShowLabBulkUpload] = useState(false);
 
   // Test form fields
   const [testName, setTestName] = useState('');
@@ -6091,9 +6169,14 @@ function PartnerLabs({ currentUser }: { currentUser: UserAccount }) {
               </div>
               <div className="flex items-center gap-2">
                 {isAdmin && (
-                  <Button onClick={openAddTestModal} className="h-9 font-bold text-xs gap-1.5">
-                    <Plus size={14} /> Add Test to this Lab
-                  </Button>
+                  <>
+                    <Button variant="secondary" onClick={() => setShowLabBulkUpload(true)} className="h-9 font-bold text-xs gap-1.5">
+                      <Upload size={14} /> Bulk CSV Upload
+                    </Button>
+                    <Button onClick={openAddTestModal} className="h-9 font-bold text-xs gap-1.5">
+                      <Plus size={14} /> Add Test to this Lab
+                    </Button>
+                  </>
                 )}
                 <button
                   type="button"
@@ -6223,6 +6306,16 @@ function PartnerLabs({ currentUser }: { currentUser: UserAccount }) {
           </div>
         )}
       </ModalPortal>
+
+      {showLabBulkUpload && managingTestsLab && (
+        <CSVBulkUploadModal
+          type="partner_lab_tests"
+          partnerLabId={managingTestsLab.id}
+          partnerLabName={managingTestsLab.name}
+          onClose={() => setShowLabBulkUpload(false)}
+          onSuccess={() => { setShowLabBulkUpload(false); loadLabs(); }}
+        />
+      )}
 
       {/* Add / Edit Test Modal for Selected Partner Lab */}
       <ModalPortal isOpen={showAddTest || !!editingTest} onClose={() => { setShowAddTest(false); setEditingTest(null); }} maxWidth="max-w-2xl">
@@ -6496,10 +6589,14 @@ function DoctorPricing({ currentUser }: { currentUser?: UserAccount }) {
 // Universal CSV Bulk Upload Modal with Validation & Error Details
 function CSVBulkUploadModal({
   type,
+  partnerLabId,
+  partnerLabName,
   onClose,
   onSuccess
 }: {
-  type: 'tests' | 'doctor_prices';
+  type: 'tests' | 'doctor_prices' | 'partner_lab_tests';
+  partnerLabId?: string;
+  partnerLabName?: string;
   onClose: () => void;
   onSuccess: () => void;
 }) {
@@ -6510,10 +6607,13 @@ function CSVBulkUploadModal({
   const [resultSummary, setResultSummary] = useState<any>(null);
 
   const isTestType = type === 'tests';
+  const isPartnerLabTestType = type === 'partner_lab_tests';
 
   const downloadSampleTemplate = () => {
     let csv = '';
-    if (isTestType) {
+    if (isPartnerLabTestType) {
+      csv = 'Test Code,Test Name,Category,Price,B2B Cost,Partner Share,Agent Incentive,Turnaround,Sample Type,Instructions\nCBC-01,Complete Blood Count,Pathology,450,200,100,50,4 hours,EDTA Whole Blood 3ml,No fasting required\nTHY-01,Thyroid Profile,Biochemistry,850,350,200,100,6 hours,Serum 2ml,Overnight fasting recommended';
+    } else if (isTestType) {
       csv = 'Test Code,Test Name,Normal Price,Partner Share,Agent Incentive,Instructions,Category\nCBC-01,Complete Blood Count,450,100,50,No special preparation required.,Pathology\nTHY-01,Thyroid Profile,850,200,100,Overnight fasting recommended.,Pathology\nMRI-01,MRI Brain,5200,1000,400,Remove metal objects before scan.,Radiology';
     } else {
       csv = 'Doctor Name,Test Code,Test Name,Doctor Price,Partner Share,Agent Incentive\nDr. Kavita Rao,PET-01,PET CT Scan,7000,1400,500\nDr. Arjun Menon,MRI-01,MRI Brain,4800,950,400';
@@ -6522,7 +6622,7 @@ function CSVBulkUploadModal({
     const blob = new Blob([csv], { type: 'text/csv' });
     const a = document.createElement('a');
     a.href = URL.createObjectURL(blob);
-    a.download = isTestType ? 'sample_test_prices_instructions.csv' : 'sample_doctor_specific_prices.csv';
+    a.download = isPartnerLabTestType ? 'sample_partner_lab_tests.csv' : isTestType ? 'sample_test_prices_instructions.csv' : 'sample_doctor_specific_prices.csv';
     a.click();
   };
 
@@ -6546,7 +6646,12 @@ function CSVBulkUploadModal({
         rowObj[h] = cols[idx] || '';
       });
 
-      if (isTestType) {
+      if (isPartnerLabTestType) {
+        const name = String(rowObj['Test Name'] || rowObj['name'] || '').trim();
+        const price = Number(rowObj['Price'] || rowObj['price'] || rowObj['MRP']);
+        if (!name) errors.push(`Row ${i}: Missing Test Name.`);
+        if (isNaN(price) || price <= 0) errors.push(`Row ${i}: Invalid Price.`);
+      } else if (isTestType) {
         const name = String(rowObj['Test Name'] || rowObj['name'] || '').trim();
         const price = Number(rowObj['Normal Price'] || rowObj['price'] || rowObj['MRP']);
         if (!name) errors.push(`Row ${i}: Missing Test Name.`);
@@ -6585,7 +6690,9 @@ function CSVBulkUploadModal({
 
     setUploading(true);
     try {
-      const endpoint = isTestType ? '/api/tests/bulk-upload' : '/api/doctor-prices/bulk-upload';
+      const endpoint = isPartnerLabTestType
+        ? `/api/partner-labs/${partnerLabId}/tests/bulk-upload`
+        : isTestType ? '/api/tests/bulk-upload' : '/api/doctor-prices/bulk-upload';
       const res = await fetch(endpoint, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -6607,7 +6714,9 @@ function CSVBulkUploadModal({
     <ModalPortal isOpen={true} onClose={onClose} maxWidth="max-w-3xl">
       <div className="flex shrink-0 items-center justify-between border-b border-border p-6 pb-4 bg-card">
         <div>
-          <h2 className="text-xl font-bold">CSV Bulk Import — {isTestType ? 'Tests, Prices & Instructions' : 'Doctor-Specific Pricing'}</h2>
+          <h2 className="text-xl font-bold">
+            CSV Bulk Import — {isPartnerLabTestType ? `${partnerLabName || 'Partner Lab'} Test Catalogue` : isTestType ? 'Tests, Prices & Instructions' : 'Doctor-Specific Pricing'}
+          </h2>
           <p className="text-xs text-muted-foreground mt-1">Upload CSV or paste CSV text to bulk insert/update pricing and instructions.</p>
         </div>
         <button onClick={onClose} className="grid size-8 place-items-center rounded-xl hover:bg-muted text-muted-foreground"><X size={16} /></button>
@@ -6665,7 +6774,7 @@ function CSVBulkUploadModal({
                   rows={3}
                   value={rawText}
                   onChange={(e) => parseAndValidate(e.target.value)}
-                  placeholder={isTestType ? "Test Code,Test Name,Normal Price,Partner Share,Agent Incentive,Instructions..." : "Doctor Name,Test Code,Doctor Price,Partner Share,Agent Incentive..."}
+                  placeholder={isPartnerLabTestType ? "Test Code,Test Name,Category,Price,B2B Cost,Partner Share,Agent Incentive..." : isTestType ? "Test Code,Test Name,Normal Price,Partner Share,Agent Incentive,Instructions..." : "Doctor Name,Test Code,Doctor Price,Partner Share,Agent Incentive..."}
                   className="w-full rounded-xl border border-input bg-background p-2 font-mono text-xs outline-none"
                 />
               </Field>
