@@ -2184,19 +2184,43 @@ router.get("/patient-portal/bookings", async (req, res) => {
     testName: a.testName,
     lab: a.lab,
     partnerLabName: a.partnerLabName,
+    partnerLabAddress: a.partnerLabAddress || null,
     status: a.status,
     paymentStatus: a.paymentStatus,
+    subtotal: a.subtotal ?? a.totalPrice ?? a.amount,
+    discount: a.discount || 0,
+    discountReason: a.discountReason || null,
     totalPrice: a.totalPrice ?? a.amount,
     advancePayment: a.advancePayment ?? 0,
     remainingAmount: a.remainingAmount ?? 0,
     reportStatus: a.reportStatus ?? "Pending",
     reportUrl: a.reportUrl || null,
+    invoiceUrl: a.invoiceUrl || null,
+    prescriptionUrl: a.prescriptionUrl || null,
     bookingType: a.bookingType || "Lab Visit",
+    address: a.address || null,
+    pinCode: a.pinCode || null,
+    collectionDate: a.collectionDate || a.date,
+    timeSlot: a.timeSlot || a.time,
+    doctor: a.doctor || null,
+    referredBy: a.referredBy || null,
+    items: Array.isArray(a.items)
+      ? a.items.map((it: any) => ({
+          testCode: it.testCode,
+          testName: it.testName,
+          price: it.price,
+          quantity: it.quantity || 1,
+          lineTotal: it.lineTotal ?? it.price,
+          instructions: it.instructions || null,
+        }))
+      : [],
   }));
 
   return res.json({
     patientName: matchedPatient?.name || rawBookings[0]?.patientName || null,
     uhid: matchedPatient?.uhid || rawBookings[0]?.uhid || null,
+    age: matchedPatient?.age ?? null,
+    gender: matchedPatient?.gender ?? null,
     bookings,
   });
 });

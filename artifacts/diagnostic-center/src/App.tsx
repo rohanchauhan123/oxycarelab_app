@@ -4,7 +4,7 @@ import { QueryClient, QueryClientProvider, useQueryClient } from '@tanstack/reac
 import { Link, Route, Switch, Router as WouterRouter, useLocation, useRoute } from 'wouter';
 import {
   Activity as ActivityIcon, ArrowUpRight, BarChart3, Bell, CalendarDays,
-  Check, CheckCircle2, ChevronLeft, ChevronRight, CircleDollarSign,
+  Check, CheckCircle2, ChevronDown, ChevronLeft, ChevronRight, CircleDollarSign,
   FileText, FlaskConical, LayoutDashboard, Menu, MoreHorizontal, Phone,
   Plus, ReceiptText, RefreshCw, Search, Settings, SlidersHorizontal, Stethoscope,
   UserRound, UsersRound, WalletCards, X, XCircle, Shield, Package, Clock,
@@ -7873,6 +7873,20 @@ function Router({ currentUser, onLogout, onSwitchUser }: { currentUser: UserAcco
 
 // Patient Self-Service Portal — separate, unauthenticated flow.
 // Login is mobile-number-only for now; OTP verification will replace this later.
+function PatientPortalDocLink({ href, label }: { href: string | null; label: string }) {
+  if (!href) return null;
+  return (
+    <a
+      href={href}
+      target="_blank"
+      rel="noreferrer"
+      className="inline-flex items-center gap-1.5 rounded-lg border border-primary/30 bg-primary/5 px-2.5 py-1.5 text-xs font-bold text-primary hover:bg-primary/10"
+    >
+      <Download size={12} /> {label}
+    </a>
+  );
+}
+
 function PatientPortal() {
   const [mobile, setMobile] = useState('');
   const [submittedMobile, setSubmittedMobile] = useState('');
@@ -7880,7 +7894,10 @@ function PatientPortal() {
   const [error, setError] = useState('');
   const [patientName, setPatientName] = useState('');
   const [uhid, setUhid] = useState('');
+  const [age, setAge] = useState<number | null>(null);
+  const [gender, setGender] = useState('');
   const [bookings, setBookings] = useState<any[]>([]);
+  const [expandedId, setExpandedId] = useState<string | null>(null);
 
   const handleLookup = async (e: FormEvent) => {
     e.preventDefault();
@@ -7897,9 +7914,13 @@ function PatientPortal() {
       if (!res.ok) throw new Error(data.error || 'Something went wrong. Please try again.');
       setPatientName(data.patientName || '');
       setUhid(data.uhid || '');
-      setBookings(Array.isArray(data.bookings) ? data.bookings : []);
+      setAge(data.age ?? null);
+      setGender(data.gender || '');
+      const items = Array.isArray(data.bookings) ? data.bookings : [];
+      setBookings(items);
+      setExpandedId(items[0]?.id ?? null);
       setSubmittedMobile(trimmed);
-      if (!data.bookings || data.bookings.length === 0) {
+      if (items.length === 0) {
         setError('No bookings found for this mobile number. Please check the number or contact Oxycare Diagnostics.');
       }
     } catch (err: any) {
@@ -7914,13 +7935,20 @@ function PatientPortal() {
     setBookings([]);
     setPatientName('');
     setUhid('');
+    setAge(null);
+    setGender('');
     setMobile('');
     setError('');
+    setExpandedId(null);
   };
+
+  const reportsReadyCount = bookings.filter((b) => b.reportUrl).length;
+  const pendingDueCount = bookings.filter((b) => Number(b.remainingAmount || 0) > 0).length;
+  const totalDue = bookings.reduce((sum, b) => sum + Number(b.remainingAmount || 0), 0);
 
   return (
     <div className="min-h-screen bg-muted/30 flex flex-col items-center px-4 py-10">
-      <div className="w-full max-w-2xl">
+      <div className="w-full max-w-3xl">
         <div className="flex items-center justify-center gap-3 mb-6">
           <div className="grid size-11 place-items-center rounded-xl bg-primary text-primary-foreground font-bold">OC</div>
           <div>
@@ -7932,7 +7960,7 @@ function PatientPortal() {
         {!submittedMobile ? (
           <Panel className="p-6">
             <h1 className="text-xl font-bold text-foreground mb-1">View Your Bookings</h1>
-            <p className="text-sm text-muted-foreground mb-5">Enter your registered mobile number to see your appointments, status, and reports.</p>
+            <p className="text-sm text-muted-foreground mb-5">Enter your registered mobile number to see your appointments, status, payments, and reports.</p>
             <form onSubmit={handleLookup} className="space-y-4">
               <Field label="Registered Mobile Number *">
                 <Input
@@ -7953,12 +7981,38 @@ function PatientPortal() {
           </Panel>
         ) : (
           <div className="space-y-4">
-            <Panel className="p-5 flex items-center justify-between gap-3 flex-wrap">
-              <div>
-                <div className="font-bold text-foreground">{patientName || 'Patient'}</div>
-                <div className="mono text-xs text-muted-foreground">{uhid ? `${uhid} · ` : ''}{submittedMobile}</div>
+            <Panel className="p-5">
+              <div className="flex items-center justify-between gap-3 flex-wrap">
+                <div className="flex items-center gap-3">
+                  <div className="grid size-11 place-items-center rounded-xl bg-primary/10 text-primary font-bold text-sm">
+                    {initials(patientName || 'Patient')}
+                  </div>
+                  <div>
+                    <div className="font-bold text-foreground">{patientName || 'Patient'}</div>
+                    <div className="mono text-xs text-muted-foreground">
+                      {uhid ? `${uhid} · ` : ''}{submittedMobile}{age ? ` · ${age} yrs` : ''}{gender ? ` · ${titleCase(gender)}` : ''}
+                    </div>
+                  </div>
+                </div>
+                <Button type="button" variant="secondary" onClick={changeNumber} className="text-xs">Use Different Number</Button>
               </div>
-              <Button type="button" variant="secondary" onClick={changeNumber} className="text-xs">Use Different Number</Button>
+
+              {bookings.length > 0 && (
+                <div className="grid grid-cols-3 gap-3 mt-4 pt-4 border-t border-border">
+                  <div className="rounded-xl bg-muted/40 p-3 text-center">
+                    <div className="text-lg font-bold text-foreground">{bookings.length}</div>
+                    <div className="text-[10px] uppercase tracking-wider text-muted-foreground mt-0.5">Total Bookings</div>
+                  </div>
+                  <div className="rounded-xl bg-[#e5f5f1] p-3 text-center">
+                    <div className="text-lg font-bold text-[#167366]">{reportsReadyCount}</div>
+                    <div className="text-[10px] uppercase tracking-wider text-[#167366]/80 mt-0.5">Reports Ready</div>
+                  </div>
+                  <div className={cx('rounded-xl p-3 text-center', pendingDueCount > 0 ? 'bg-[#fff2dd]' : 'bg-muted/40')}>
+                    <div className={cx('text-lg font-bold', pendingDueCount > 0 ? 'text-[#a96816]' : 'text-foreground')}>{money(totalDue)}</div>
+                    <div className={cx('text-[10px] uppercase tracking-wider mt-0.5', pendingDueCount > 0 ? 'text-[#a96816]/80' : 'text-muted-foreground')}>Balance Due</div>
+                  </div>
+                </div>
+              )}
             </Panel>
 
             {error && (
@@ -7967,37 +8021,114 @@ function PatientPortal() {
 
             {bookings.length > 0 && (
               <div className="space-y-3">
-                {bookings.map((b) => (
-                  <Panel key={b.id} className="p-4">
-                    <div className="flex items-start justify-between gap-3 flex-wrap">
-                      <div>
-                        <div className="font-bold text-sm text-foreground">{b.testName}</div>
-                        <div className="text-xs text-muted-foreground mt-0.5">
-                          {formatDay(b.date)} · {b.time} · {b.partnerLabName || b.lab}
-                        </div>
-                        <div className="mono text-[10px] text-muted-foreground mt-1">Booking ID: {b.id}</div>
-                      </div>
-                      <div className="flex flex-col items-end gap-1.5">
-                        <span className={cx('rounded-lg px-2.5 py-1 text-xs font-bold', statusTone(b.status))}>{titleCase(b.status)}</span>
-                        <span className="text-xs font-semibold text-muted-foreground">{money(b.totalPrice)}</span>
-                      </div>
-                    </div>
-                    {b.reportUrl ? (
-                      <a
-                        href={b.reportUrl}
-                        target="_blank"
-                        rel="noreferrer"
-                        className="mt-3 inline-flex items-center gap-1.5 text-xs font-bold text-primary hover:underline"
+                {bookings.map((b) => {
+                  const isOpen = expandedId === b.id;
+                  const isHomeColl = String(b.bookingType || '').toLowerCase() === 'home collection';
+                  return (
+                    <Panel key={b.id} className="overflow-hidden">
+                      <button
+                        type="button"
+                        onClick={() => setExpandedId(isOpen ? null : b.id)}
+                        className="w-full p-4 text-left flex items-start justify-between gap-3 flex-wrap hover:bg-muted/20 transition-colors"
                       >
-                        <Download size={13} /> Download Report
-                      </a>
-                    ) : (
-                      <div className="mt-3 text-[11px] text-muted-foreground">
-                        Report {String(b.reportStatus || 'Pending').toLowerCase() === 'pending' ? 'not ready yet' : b.reportStatus}
-                      </div>
-                    )}
-                  </Panel>
-                ))}
+                        <div>
+                          <div className="font-bold text-sm text-foreground">{b.testName}</div>
+                          <div className="text-xs text-muted-foreground mt-0.5">
+                            {formatDay(b.date)} · {b.time} · {isHomeColl ? 'Home Collection' : (b.partnerLabName || b.lab)}
+                          </div>
+                          <div className="mono text-[10px] text-muted-foreground mt-1">Booking ID: {b.id}</div>
+                        </div>
+                        <div className="flex items-center gap-3">
+                          <div className="flex flex-col items-end gap-1.5">
+                            <span className={cx('rounded-lg px-2.5 py-1 text-xs font-bold', statusTone(b.status))}>{titleCase(b.status)}</span>
+                            <span className="text-xs font-semibold text-muted-foreground">{money(b.totalPrice)}</span>
+                          </div>
+                          <ChevronDown size={16} className={cx('text-muted-foreground transition-transform shrink-0', isOpen && 'rotate-180')} />
+                        </div>
+                      </button>
+
+                      {isOpen && (
+                        <div className="border-t border-border p-4 space-y-4 bg-muted/10">
+                          {/* Tests included */}
+                          {b.items && b.items.length > 0 && (
+                            <div>
+                              <div className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground mb-1.5">Tests Included</div>
+                              <div className="space-y-1.5">
+                                {b.items.map((it: any, idx: number) => (
+                                  <div key={idx} className="flex items-start justify-between gap-3 rounded-xl border border-border bg-card px-3 py-2 text-xs">
+                                    <div>
+                                      <div className="font-bold text-foreground">{it.testName}{it.quantity > 1 ? ` × ${it.quantity}` : ''}</div>
+                                      {it.instructions && <div className="text-[11px] text-muted-foreground mt-0.5">{it.instructions}</div>}
+                                    </div>
+                                    <span className="mono font-semibold text-foreground shrink-0">{money(it.lineTotal ?? it.price)}</span>
+                                  </div>
+                                ))}
+                              </div>
+                            </div>
+                          )}
+
+                          {/* Lab / collection details */}
+                          <div className="rounded-xl border border-border bg-card p-3 text-xs">
+                            <div className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground mb-1.5">
+                              {isHomeColl ? 'Home Collection Details' : 'Diagnostic Lab'}
+                            </div>
+                            {isHomeColl ? (
+                              <div className="space-y-1 text-muted-foreground">
+                                <div><span className="font-semibold text-foreground">Address: </span>{b.address || 'On file'}{b.pinCode ? ` — ${b.pinCode}` : ''}</div>
+                                <div><span className="font-semibold text-foreground">Collection Slot: </span>{formatDay(b.collectionDate)} · {b.timeSlot}</div>
+                              </div>
+                            ) : (
+                              <div className="text-muted-foreground">
+                                <span className="font-semibold text-foreground">{b.partnerLabName || b.lab}</span>
+                                {b.partnerLabAddress && <div className="mt-0.5">{b.partnerLabAddress}</div>}
+                              </div>
+                            )}
+                            {b.referredBy && b.referredBy !== 'Direct' && (
+                              <div className="mt-1.5 text-muted-foreground"><span className="font-semibold text-foreground">Referred By: </span>{b.doctor || b.referredBy}</div>
+                            )}
+                          </div>
+
+                          {/* Payment breakdown */}
+                          <div className="rounded-xl border border-border bg-card p-3 text-xs">
+                            <div className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground mb-1.5">Payment Summary</div>
+                            <div className="space-y-1">
+                              <div className="flex justify-between"><span className="text-muted-foreground">Subtotal</span><span className="mono">{money(b.subtotal ?? b.totalPrice)}</span></div>
+                              {Number(b.discount || 0) > 0 && (
+                                <div className="flex justify-between text-[#a96816]">
+                                  <span>Discount{b.discountReason ? ` (${b.discountReason})` : ''}</span>
+                                  <span className="mono">− {money(b.discount)}</span>
+                                </div>
+                              )}
+                              <div className="flex justify-between font-bold text-foreground pt-1 border-t border-border">
+                                <span>Total Payable</span><span className="mono">{money(b.totalPrice)}</span>
+                              </div>
+                              <div className="flex justify-between"><span className="text-muted-foreground">Advance Paid</span><span className="mono">{money(b.advancePayment)}</span></div>
+                              <div className={cx('flex justify-between font-bold', Number(b.remainingAmount || 0) > 0 ? 'text-[#a96816]' : 'text-[#167366]')}>
+                                <span>{Number(b.remainingAmount || 0) > 0 ? 'Balance Due' : 'Payment Status'}</span>
+                                <span className="mono">{Number(b.remainingAmount || 0) > 0 ? money(b.remainingAmount) : 'Fully Paid'}</span>
+                              </div>
+                            </div>
+                          </div>
+
+                          {/* Documents */}
+                          <div>
+                            <div className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground mb-1.5">Documents</div>
+                            <div className="flex flex-wrap gap-2">
+                              <PatientPortalDocLink href={b.reportUrl} label="Download Report" />
+                              <PatientPortalDocLink href={b.invoiceUrl} label="Download Invoice" />
+                              <PatientPortalDocLink href={b.prescriptionUrl} label="View Prescription" />
+                              {!b.reportUrl && (
+                                <span className="inline-flex items-center rounded-lg border border-border px-2.5 py-1.5 text-xs text-muted-foreground">
+                                  Report {String(b.reportStatus || 'Pending').toLowerCase() === 'pending' ? 'not ready yet' : b.reportStatus}
+                                </span>
+                              )}
+                            </div>
+                          </div>
+                        </div>
+                      )}
+                    </Panel>
+                  );
+                })}
               </div>
             )}
           </div>
