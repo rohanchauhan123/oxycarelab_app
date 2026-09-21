@@ -63,6 +63,7 @@ interface PartnerLabTest {
   agentIncentive: number;
   turnaround?: string;
   sampleType?: string;
+  fasting?: string;
   instructions?: string;
   parameters?: TestParameter[];
   active?: boolean;
@@ -3851,6 +3852,8 @@ function NewAppointment({ currentUser }: { currentUser: UserAccount }) {
   }, [patients, patientSearch]);
 
   const selectedPatientObj = useMemo(() => patients.find((p) => p.id === patientId), [patients, patientId]);
+  const [patientHistory, setPatientHistory] = useState<any[]>([]);
+  const [loadingHistory, setLoadingHistory] = useState(false);
 
   // Booking Type: Lab Visit or Home Collection
   const [isHomeCollection, setIsHomeCollection] = useState(false);
@@ -3858,6 +3861,23 @@ function NewAppointment({ currentUser }: { currentUser: UserAccount }) {
   const [pinCode, setPinCode] = useState('');
   const [collectionDate, setCollectionDate] = useState(today);
   const [timeSlot, setTimeSlot] = useState('08:00 AM – 09:00 AM');
+
+  // Auto-fill saved address and load past-test history the moment a registered patient is selected
+  useEffect(() => {
+    if (patientMode !== 'registered' || !selectedPatientObj) {
+      setPatientHistory([]);
+      return;
+    }
+    setAddress(selectedPatientObj.address || '');
+    setPinCode(selectedPatientObj.pinCode || '');
+
+    setLoadingHistory(true);
+    fetch(`/api/appointments?patientId=${selectedPatientObj.id}&pageSize=50`)
+      .then((r) => r.json())
+      .then((data) => setPatientHistory(data.items || []))
+      .catch(() => setPatientHistory([]))
+      .finally(() => setLoadingHistory(false));
+  }, [selectedPatientObj, patientMode]);
 
   // Multi-Test Selection Cart State
   const [selectedTests, setSelectedTests] = useState<TestItemSnapshot[]>([]);
@@ -4278,29 +4298,64 @@ function NewAppointment({ currentUser }: { currentUser: UserAccount }) {
             {patientMode === 'registered' ? (
               <div className="space-y-3">
                 {selectedPatientObj ? (
-                  <div className="flex items-center justify-between rounded-2xl border border-primary/30 bg-primary/5 p-4 shadow-sm">
-                    <div className="flex items-center gap-3">
-                      <div className="grid size-10 place-items-center rounded-xl bg-primary text-primary-foreground font-bold text-sm">
-                        {initials(selectedPatientObj.name)}
-                      </div>
-                      <div>
-                        <div className="font-bold text-sm text-foreground flex items-center gap-2">
-                          <span>{selectedPatientObj.name}</span>
-                          <span className="mono rounded bg-primary/10 px-2 py-0.5 text-[10px] font-bold text-primary">{selectedPatientObj.uhid}</span>
+                  <div className="rounded-2xl border border-primary/30 bg-primary/5 p-4 shadow-sm space-y-3">
+                    <div className="flex items-center justify-between">
+                      <div className="flex items-center gap-3">
+                        <div className="grid size-10 place-items-center rounded-xl bg-primary text-primary-foreground font-bold text-sm">
+                          {initials(selectedPatientObj.name)}
                         </div>
-                        <div className="text-xs text-muted-foreground mt-0.5">
-                          Mobile: {selectedPatientObj.mobile} · {selectedPatientObj.age} yrs ({selectedPatientObj.gender})
+                        <div>
+                          <div className="font-bold text-sm text-foreground flex items-center gap-2">
+                            <span>{selectedPatientObj.name}</span>
+                            <span className="mono rounded bg-primary/10 px-2 py-0.5 text-[10px] font-bold text-primary">{selectedPatientObj.uhid}</span>
+                          </div>
+                          <div className="text-xs text-muted-foreground mt-0.5">
+                            Mobile: {selectedPatientObj.mobile} · {selectedPatientObj.age} yrs ({selectedPatientObj.gender})
+                          </div>
                         </div>
                       </div>
+                      <Button
+                        type="button"
+                        variant="ghost"
+                        className="text-xs font-semibold hover:bg-destructive/10 hover:text-destructive"
+                        onClick={() => { setPatientId(''); setPatientSearch(''); }}
+                      >
+                        <X size={15} /> Change Patient
+                      </Button>
                     </div>
-                    <Button
-                      type="button"
-                      variant="ghost"
-                      className="text-xs font-semibold hover:bg-destructive/10 hover:text-destructive"
-                      onClick={() => { setPatientId(''); setPatientSearch(''); }}
-                    >
-                      <X size={15} /> Change Patient
-                    </Button>
+
+                    {selectedPatientObj.address && (
+                      <div className="flex items-start gap-2 rounded-xl border border-border bg-card px-3 py-2 text-xs">
+                        <MapPin size={14} className="mt-0.5 shrink-0 text-primary" />
+                        <div>
+                          <span className="font-bold text-foreground">Saved Address: </span>
+                          <span className="text-muted-foreground">{selectedPatientObj.address}{selectedPatientObj.pinCode ? ` — ${selectedPatientObj.pinCode}` : ''}</span>
+                        </div>
+                      </div>
+                    )}
+
+                    <div className="rounded-xl border border-border bg-card px-3 py-2">
+                      <div className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground mb-1.5">
+                        Previous Tests Conducted
+                      </div>
+                      {loadingHistory ? (
+                        <div className="text-xs text-muted-foreground">Loading history...</div>
+                      ) : patientHistory.length === 0 ? (
+                        <div className="text-xs text-muted-foreground">No previous bookings on file for this patient.</div>
+                      ) : (
+                        <div className="flex flex-wrap gap-1.5">
+                          {patientHistory.slice(0, 10).map((h) => (
+                            <span
+                              key={h.id}
+                              title={`${h.id} · ${h.status}`}
+                              className="mono rounded-lg bg-muted px-2 py-1 text-[10px] font-semibold text-foreground"
+                            >
+                              {h.testName} <span className="text-muted-foreground">({formatDay(h.date)})</span>
+                            </span>
+                          ))}
+                        </div>
+                      )}
+                    </div>
                   </div>
                 ) : (
                   <div className="space-y-3">
@@ -5027,7 +5082,7 @@ function Patients() {
 }
 
 function PatientDialog({ onClose }: { onClose: () => void }) {
-  const [form, setForm] = useState<PatientInput>({ name: '', mobile: '', whatsapp: '', email: '', age: 0, gender: 'female' });
+  const [form, setForm] = useState<PatientInput>({ name: '', mobile: '', whatsapp: '', email: '', age: 0, gender: 'female', address: '' });
   const mutation = useCreatePatient();
   const queryClient = useQueryClient();
   const set = (key: keyof PatientInput, value: string | number) => setForm((current) => ({ ...current, [key]: value }));
@@ -5084,6 +5139,9 @@ function PatientDialog({ onClose }: { onClose: () => void }) {
           </Field>
           <Field label="Email address" className="sm:col-span-2">
             <Input type="email" value={form.email} onChange={(event) => set('email', event.target.value)} placeholder="Optional" />
+          </Field>
+          <Field label="Address" className="sm:col-span-2">
+            <Input value={form.address || ''} onChange={(event) => set('address', event.target.value)} placeholder="Optional — used to prefill home collection bookings" />
           </Field>
         </div>
         <div className="flex shrink-0 justify-end gap-2 border-t border-border bg-muted/20 px-6 py-4">
@@ -5531,6 +5589,7 @@ function PartnerLabs({ currentUser }: { currentUser: UserAccount }) {
   const [testAgentIncentive, setTestAgentIncentive] = useState('');
   const [testTurnaround, setTestTurnaround] = useState('Same Day');
   const [testSampleType, setTestSampleType] = useState('EDTA Whole Blood');
+  const [testFasting, setTestFasting] = useState('Not Required');
   const [testInstructions, setTestInstructions] = useState('No special preparation required.');
 
   const isAdmin = currentUser.role === 'ADMIN' || currentUser.role === 'SUPER_ADMIN';
@@ -5651,6 +5710,7 @@ function PartnerLabs({ currentUser }: { currentUser: UserAccount }) {
     setTestAgentIncentive('100');
     setTestTurnaround('Same Day');
     setTestSampleType('EDTA Whole Blood');
+    setTestFasting('Not Required');
     setTestInstructions('No special preparation required.');
     setShowAddTest(true);
   };
@@ -5666,6 +5726,7 @@ function PartnerLabs({ currentUser }: { currentUser: UserAccount }) {
     setTestAgentIncentive(String(t.agentIncentive || ''));
     setTestTurnaround(t.turnaround || 'Same Day');
     setTestSampleType(t.sampleType || 'EDTA Whole Blood');
+    setTestFasting(t.fasting || 'Not Required');
     setTestInstructions(t.instructions || 'No special preparation required.');
   };
 
@@ -5687,6 +5748,7 @@ function PartnerLabs({ currentUser }: { currentUser: UserAccount }) {
       agentIncentive: Number(testAgentIncentive || 0),
       turnaround: testTurnaround,
       sampleType: testSampleType,
+      fasting: testFasting,
       instructions: testInstructions,
     };
 
@@ -5889,6 +5951,14 @@ function PartnerLabs({ currentUser }: { currentUser: UserAccount }) {
           <option value="24 Hours">24 Hours</option>
           <option value="48 Hours">48 Hours</option>
           <option value="3-5 Days">3-5 Days</option>
+        </Select>
+      </Field>
+      <Field label="Fasting">
+        <Select value={testFasting} onChange={(e) => setTestFasting(e.target.value)}>
+          <option value="Not Required">Not Required</option>
+          <option value="8 Hours Fasting">8 Hours Fasting</option>
+          <option value="10-12 Hours Fasting">10-12 Hours Fasting</option>
+          <option value="Overnight Fasting">Overnight Fasting</option>
         </Select>
       </Field>
       <Field label="Preparation Instructions" className="sm:col-span-2">
@@ -6612,9 +6682,9 @@ function CSVBulkUploadModal({
   const downloadSampleTemplate = () => {
     let csv = '';
     if (isPartnerLabTestType) {
-      csv = 'Test Code,Test Name,Category,Price,B2B Cost,Partner Share,Agent Incentive,Turnaround,Sample Type,Instructions\nCBC-01,Complete Blood Count,Pathology,450,200,100,50,4 hours,EDTA Whole Blood 3ml,No fasting required\nTHY-01,Thyroid Profile,Biochemistry,850,350,200,100,6 hours,Serum 2ml,Overnight fasting recommended';
+      csv = 'Test Code,Test Name,Category,Price,B2B Cost,Partner Share,Agent Incentive,Turnaround,Sample Type,Fasting,Instructions\nCBC-01,Complete Blood Count,Pathology,450,200,100,50,4 hours,EDTA Whole Blood 3ml,Not Required,No fasting required\nTHY-01,Thyroid Profile,Biochemistry,850,350,200,100,6 hours,Serum 2ml,Overnight Fasting,Overnight fasting recommended';
     } else if (isTestType) {
-      csv = 'Test Code,Test Name,Normal Price,Partner Share,Agent Incentive,Instructions,Category\nCBC-01,Complete Blood Count,450,100,50,No special preparation required.,Pathology\nTHY-01,Thyroid Profile,850,200,100,Overnight fasting recommended.,Pathology\nMRI-01,MRI Brain,5200,1000,400,Remove metal objects before scan.,Radiology';
+      csv = 'Test Code,Test Name,Normal Price,Partner Share,Agent Incentive,Sample Type,TAT,Fasting,Instructions,Category\nCBC-01,Complete Blood Count,450,100,50,EDTA Whole Blood,4 Hours,Not Required,No special preparation required.,Pathology\nTHY-01,Thyroid Profile,850,200,100,Serum,6 Hours,Overnight Fasting,Overnight fasting recommended.,Pathology\nMRI-01,MRI Brain,5200,1000,400,N/A - Imaging / Scan,Same Day,Not Required,Remove metal objects before scan.,Radiology';
     } else {
       csv = 'Doctor Name,Test Code,Test Name,Doctor Price,Partner Share,Agent Incentive\nDr. Kavita Rao,PET-01,PET CT Scan,7000,1400,500\nDr. Arjun Menon,MRI-01,MRI Brain,4800,950,400';
     }
@@ -6854,6 +6924,9 @@ function Tests({ role }: { role: Role }) {
   const [price, setPrice] = useState('');
   const [partnerShare, setPartnerShare] = useState('100');
   const [agentIncentive, setAgentIncentive] = useState('50');
+  const [sampleType, setSampleType] = useState('EDTA Whole Blood');
+  const [turnaround, setTurnaround] = useState('Same Day');
+  const [fasting, setFasting] = useState('Not Required');
   const [instructions, setInstructions] = useState('');
   const [parameters, setParameters] = useState<TestParameter[]>([]);
 
@@ -6902,6 +6975,9 @@ function Tests({ role }: { role: Role }) {
           price: Number(price),
           partnerShare: Number(partnerShare || 0),
           agentIncentive: Number(agentIncentive || 0),
+          sampleType,
+          turnaround,
+          fasting,
           instructions: instructions || 'No special preparation required.',
           parameters: parameters.filter((p) => p.name.trim()),
         }),
@@ -6909,6 +6985,7 @@ function Tests({ role }: { role: Role }) {
       toast.success('Test added to master catalogue');
       setShowAdd(false);
       setName(''); setPrice(''); setInstructions(''); setTestCode(''); setParameters([]);
+      setSampleType('EDTA Whole Blood'); setTurnaround('Same Day'); setFasting('Not Required');
       loadTests();
     } catch {
       toast.error('Could not add test');
@@ -7029,6 +7106,36 @@ function Tests({ role }: { role: Role }) {
               {role !== 'DOCTOR' && (
                 <Field label="Agent Incentive (₹)"><Input type="number" value={agentIncentive} onChange={(e) => setAgentIncentive(e.target.value)} placeholder="100" /></Field>
               )}
+            </div>
+            <div className="grid grid-cols-3 gap-3">
+              <Field label="Sample Type">
+                <Select value={sampleType} onChange={(e) => setSampleType(e.target.value)}>
+                  <option value="EDTA Whole Blood">EDTA Whole Blood</option>
+                  <option value="Serum">Serum</option>
+                  <option value="Fluoride Plasma">Fluoride Plasma</option>
+                  <option value="Urine Sample">Urine Sample</option>
+                  <option value="Stool Sample">Stool Sample</option>
+                  <option value="N/A - Imaging / Scan">N/A - Imaging / Scan</option>
+                </Select>
+              </Field>
+              <Field label="Turnaround Time (TAT)">
+                <Select value={turnaround} onChange={(e) => setTurnaround(e.target.value)}>
+                  <option value="2 Hours">2 Hours</option>
+                  <option value="4 Hours">4 Hours</option>
+                  <option value="Same Day">Same Day</option>
+                  <option value="24 Hours">24 Hours</option>
+                  <option value="48 Hours">48 Hours</option>
+                  <option value="3-5 Days">3-5 Days</option>
+                </Select>
+              </Field>
+              <Field label="Fasting">
+                <Select value={fasting} onChange={(e) => setFasting(e.target.value)}>
+                  <option value="Not Required">Not Required</option>
+                  <option value="8 Hours Fasting">8 Hours Fasting</option>
+                  <option value="10-12 Hours Fasting">10-12 Hours Fasting</option>
+                  <option value="Overnight Fasting">Overnight Fasting</option>
+                </Select>
+              </Field>
             </div>
             <Field label="Patient Preparation Instructions">
               <Input value={instructions} onChange={(e) => setInstructions(e.target.value)} placeholder="e.g. Fasting required for 8-12 hours" />

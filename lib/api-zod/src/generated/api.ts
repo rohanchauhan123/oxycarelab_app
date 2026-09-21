@@ -240,6 +240,8 @@ export const ListPatientsResponseItem = zod.object({
   "email": zod.string().nullish(),
   "age": zod.number(),
   "gender": zod.string(),
+  "address": zod.string().nullish(),
+  "pinCode": zod.string().nullish(),
   "lastVisit": zod.string(),
   "totalVisits": zod.number()
 })
@@ -263,7 +265,9 @@ export const CreatePatientBody = zod.object({
   "whatsapp": zod.string().optional(),
   "email": zod.string().optional(),
   "age": zod.number().min(createPatientBodyAgeMin),
-  "gender": zod.string()
+  "gender": zod.string(),
+  "address": zod.string().nullish(),
+  "pinCode": zod.string().nullish()
 })
 
 export const CreatePatientResponse = zod.object({
@@ -275,6 +279,8 @@ export const CreatePatientResponse = zod.object({
   "email": zod.string().nullish(),
   "age": zod.number(),
   "gender": zod.string(),
+  "address": zod.string().nullish(),
+  "pinCode": zod.string().nullish(),
   "lastVisit": zod.string(),
   "totalVisits": zod.number()
 })

@@ -95,6 +95,10 @@ export interface Patient {
   email?: string | null;
   age: number;
   gender: string;
+  /** @nullable */
+  address?: string | null;
+  /** @nullable */
+  pinCode?: string | null;
   lastVisit: string;
   totalVisits: number;
 }
@@ -109,6 +113,10 @@ export interface PatientInput {
   /** @minimum 0 */
   age: number;
   gender: string;
+  /** @nullable */
+  address?: string | null;
+  /** @nullable */
+  pinCode?: string | null;
 }
 
 export interface Test {

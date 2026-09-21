@@ -984,6 +984,7 @@ router.post("/tests", async (req, res) => {
     lab: body.lab || "Central Lab",
     sampleType: body.sampleType || "Blood",
     turnaround: body.turnaround || "24 hours",
+    fasting: body.fasting || "Not Required",
     duration: Number(body.duration) || 30,
     price: Number(body.price),
     partnerShare: Number(body.partnerShare || 0),
@@ -1036,6 +1037,9 @@ router.post("/tests/bulk-upload", async (req, res) => {
       const partnerShareNum = Number(row.partnerShare || row["Partner Share"] || 0);
       const agentIncentiveNum = Number(row.agentIncentive || row["Agent Incentive"] || 0);
       const instructionsText = String(row.instructions || row["Instructions"] || row["Patient Preparation"] || "").trim();
+      const sampleTypeText = String(row.sampleType || row["Sample Type"] || "").trim();
+      const turnaroundText = String(row.turnaround || row["TAT"] || row["Turnaround"] || "").trim();
+      const fastingText = String(row.fasting || row["Fasting"] || "").trim();
 
       if (!name) throw new Error("Test Name is required");
       if (isNaN(priceNum) || priceNum <= 0) throw new Error("Valid positive price is required");
@@ -1052,6 +1056,9 @@ router.post("/tests/bulk-upload", async (req, res) => {
           partnerShare: isNaN(partnerShareNum) ? existing.partnerShare : partnerShareNum,
           agentIncentive: isNaN(agentIncentiveNum) ? existing.agentIncentive : agentIncentiveNum,
           instructions: instructionsText || existing.instructions,
+          sampleType: sampleTypeText || existing.sampleType,
+          turnaround: turnaroundText || existing.turnaround,
+          fasting: fastingText || existing.fasting,
           department: row.department || row["Category"] || row["Department"] || existing.department,
         };
         await save("test", updatedTest);
@@ -1064,8 +1071,9 @@ router.post("/tests/bulk-upload", async (req, res) => {
           shortName: row.shortName || name.slice(0, 8),
           department: row.department || row["Category"] || row["Department"] || "General",
           lab: row.lab || "Central Lab",
-          sampleType: row.sampleType || "Blood",
-          turnaround: row.turnaround || "24 hours",
+          sampleType: sampleTypeText || "Blood",
+          turnaround: turnaroundText || "24 hours",
+          fasting: fastingText || "Not Required",
           duration: 30,
           price: priceNum,
           partnerShare: isNaN(partnerShareNum) ? 0 : partnerShareNum,
@@ -1328,7 +1336,7 @@ router.post("/partner-labs/:id/tests", async (req, res) => {
   const lab: any = await record("partner_lab", req.params.id);
   if (!lab) return res.status(404).json({ error: "Partner lab not found." });
 
-  const { name, testCode, category, price, b2bCost, partnerShare, agentIncentive, turnaround, sampleType, instructions, parameters } = req.body;
+  const { name, testCode, category, price, b2bCost, partnerShare, agentIncentive, turnaround, sampleType, fasting, instructions, parameters } = req.body;
   if (!name || price === undefined) {
     return res.status(400).json({ error: "Test name and price are required." });
   }
@@ -1344,6 +1352,7 @@ router.post("/partner-labs/:id/tests", async (req, res) => {
     agentIncentive: Number(agentIncentive || 0),
     turnaround: String(turnaround || "Same Day").trim(),
     sampleType: String(sampleType || "Blood").trim(),
+    fasting: String(fasting || "Not Required").trim(),
     instructions: String(instructions || "Standard preparation").trim(),
     parameters: Array.isArray(parameters) ? parameters : [],
     active: true,
@@ -1422,6 +1431,7 @@ router.post("/partner-labs/:id/tests/bulk-upload", async (req, res) => {
       const category = String(row.category || row["Category"] || "").trim();
       const turnaround = String(row.turnaround || row["Turnaround"] || row["TAT"] || "").trim();
       const sampleType = String(row.sampleType || row["Sample Type"] || "").trim();
+      const fasting = String(row.fasting || row["Fasting"] || "").trim();
       const instructionsText = String(row.instructions || row["Instructions"] || "").trim();
 
       if (!name) throw new Error("Test Name is required");
@@ -1442,6 +1452,7 @@ router.post("/partner-labs/:id/tests/bulk-upload", async (req, res) => {
           category: category || existingTests[existingIndex].category,
           turnaround: turnaround || existingTests[existingIndex].turnaround,
           sampleType: sampleType || existingTests[existingIndex].sampleType,
+          fasting: fasting || existingTests[existingIndex].fasting,
           instructions: instructionsText || existingTests[existingIndex].instructions,
           updatedAt: new Date().toISOString(),
         };
@@ -1458,6 +1469,7 @@ router.post("/partner-labs/:id/tests/bulk-upload", async (req, res) => {
           agentIncentive: isNaN(agentIncentiveNum) ? 0 : agentIncentiveNum,
           turnaround: turnaround || "Same Day",
           sampleType: sampleType || "Blood",
+          fasting: fasting || "Not Required",
           instructions: instructionsText || "Standard preparation",
           parameters: [],
           active: true,
@@ -1501,8 +1513,9 @@ router.get("/dashboard/summary", async (_req, res) => {
 // Appointment Operations (Supporting Dynamic Search & Home Collection Filter)
 // Shared appointment filtering logic
 function filterAppointments(items: any[], query: any) {
-  const { date, fromDate, toDate, status, bookingType, paymentStatus, testName, lab, search } = query;
+  const { date, fromDate, toDate, status, bookingType, paymentStatus, testName, lab, search, patientId } = query;
 
+  if (patientId) items = items.filter((item) => item.patientId === patientId);
   if (date) items = items.filter((item) => item.date === date);
   if (fromDate) items = items.filter((item) => item.date >= String(fromDate));
   if (toDate) items = items.filter((item) => item.date <= String(toDate));
@@ -1587,6 +1600,8 @@ router.post("/appointments", async (req, res) => {
       email: body.email || null,
       age: Number(body.age || 35),
       gender: body.gender || "Male",
+      address: body.address || null,
+      pinCode: body.pinCode || null,
       lastVisit: body.date || today(),
       totalVisits: 1,
     };
@@ -1597,6 +1612,13 @@ router.post("/appointments", async (req, res) => {
   }
 
   if (!patient) return res.status(400).json({ error: "Patient details missing." });
+
+  // Keep the patient's address on file up to date whenever a fresh one is supplied
+  if (body.address && body.address !== patient.address) {
+    const updatedPatient = { ...patient, address: body.address, pinCode: body.pinCode || patient.pinCode || null };
+    await save("patient", updatedPatient);
+    patient = updatedPatient;
+  }
 
   // Mandatory Partner Lab selection
   if (!body.partnerLabId && !body.partnerLabName) {
@@ -2130,7 +2152,7 @@ router.post("/patients", async (req, res) => {
   const items = await records("patient");
   const duplicate = items.find((item) => item.mobile === body.mobile);
   if (duplicate) return res.status(409).json({ error: "A patient with this mobile number already exists." });
-  const patient = { id: uid("pat"), uhid: `UHID-${Math.floor(240500 + Math.random() * 400)}`, name: body.name, mobile: body.mobile, whatsapp: body.whatsapp || body.mobile, email: body.email ?? null, age: body.age, gender: body.gender, lastVisit: today(), totalVisits: 0 };
+  const patient = { id: uid("pat"), uhid: `UHID-${Math.floor(240500 + Math.random() * 400)}`, name: body.name, mobile: body.mobile, whatsapp: body.whatsapp || body.mobile, email: body.email ?? null, age: body.age, gender: body.gender, address: body.address ?? null, pinCode: body.pinCode ?? null, lastVisit: today(), totalVisits: 0 };
   await db.insert(diagnosticRecordsTable).values({ id: `patient:${patient.id}`, entity: "patient", payload: patient });
   await logAudit("Ops Staff", "FRONTDESK", "CREATE_PATIENT", "patient", patient.id, patient);
   return res.status(201).json(CreatePatientResponse.parse(patient));
