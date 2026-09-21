@@ -2158,6 +2158,49 @@ router.post("/patients", async (req, res) => {
   return res.status(201).json(CreatePatientResponse.parse(patient));
 });
 
+// Patient Self-Service Portal — lookup by registered mobile number.
+// NOTE: this is an intentionally lightweight, unauthenticated lookup (mobile number only),
+// as requested for the initial rollout. OTP verification is planned as a follow-up before
+// this is exposed on a public domain, since anyone who knows a patient's mobile number can
+// currently view their booking/report history through this endpoint.
+router.get("/patient-portal/bookings", async (req, res) => {
+  const mobile = String(req.query.mobile || "").trim();
+  if (!mobile || mobile.length < 8) {
+    return res.status(400).json({ error: "A valid registered mobile number is required." });
+  }
+
+  const patients = await records("patient");
+  const matchedPatient = patients.find((p: any) => String(p.mobile || "").trim() === mobile);
+
+  const appointments = await records("appointment");
+  const rawBookings = appointments
+    .filter((a: any) => String(a.mobile || "").trim() === mobile)
+    .sort((a: any, b: any) => `${b.date} ${b.time}`.localeCompare(`${a.date} ${a.time}`));
+
+  const bookings = rawBookings.map((a: any) => ({
+    id: a.id,
+    date: a.date,
+    time: a.time,
+    testName: a.testName,
+    lab: a.lab,
+    partnerLabName: a.partnerLabName,
+    status: a.status,
+    paymentStatus: a.paymentStatus,
+    totalPrice: a.totalPrice ?? a.amount,
+    advancePayment: a.advancePayment ?? 0,
+    remainingAmount: a.remainingAmount ?? 0,
+    reportStatus: a.reportStatus ?? "Pending",
+    reportUrl: a.reportUrl || null,
+    bookingType: a.bookingType || "Lab Visit",
+  }));
+
+  return res.json({
+    patientName: matchedPatient?.name || rawBookings[0]?.patientName || null,
+    uhid: matchedPatient?.uhid || rawBookings[0]?.uhid || null,
+    bookings,
+  });
+});
+
 // WhatsApp Notifications & Communication Center
 router.get("/whatsapp/config", async (_req, res) => {
   const configs = await records("whatsapp_config");

@@ -7871,6 +7871,142 @@ function Router({ currentUser, onLogout, onSwitchUser }: { currentUser: UserAcco
   </ErrorBoundary>;
 }
 
+// Patient Self-Service Portal — separate, unauthenticated flow.
+// Login is mobile-number-only for now; OTP verification will replace this later.
+function PatientPortal() {
+  const [mobile, setMobile] = useState('');
+  const [submittedMobile, setSubmittedMobile] = useState('');
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState('');
+  const [patientName, setPatientName] = useState('');
+  const [uhid, setUhid] = useState('');
+  const [bookings, setBookings] = useState<any[]>([]);
+
+  const handleLookup = async (e: FormEvent) => {
+    e.preventDefault();
+    const trimmed = mobile.trim();
+    if (trimmed.length < 8) {
+      setError('Please enter your valid registered mobile number.');
+      return;
+    }
+    setLoading(true);
+    setError('');
+    try {
+      const res = await fetch(`/api/patient-portal/bookings?mobile=${encodeURIComponent(trimmed)}`);
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || 'Something went wrong. Please try again.');
+      setPatientName(data.patientName || '');
+      setUhid(data.uhid || '');
+      setBookings(Array.isArray(data.bookings) ? data.bookings : []);
+      setSubmittedMobile(trimmed);
+      if (!data.bookings || data.bookings.length === 0) {
+        setError('No bookings found for this mobile number. Please check the number or contact Oxycare Diagnostics.');
+      }
+    } catch (err: any) {
+      setError(err.message || 'Could not fetch your bookings. Please try again.');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const changeNumber = () => {
+    setSubmittedMobile('');
+    setBookings([]);
+    setPatientName('');
+    setUhid('');
+    setMobile('');
+    setError('');
+  };
+
+  return (
+    <div className="min-h-screen bg-muted/30 flex flex-col items-center px-4 py-10">
+      <div className="w-full max-w-2xl">
+        <div className="flex items-center justify-center gap-3 mb-6">
+          <div className="grid size-11 place-items-center rounded-xl bg-primary text-primary-foreground font-bold">OC</div>
+          <div>
+            <div className="text-lg font-bold text-foreground">Oxycare Diagnostics</div>
+            <div className="text-xs text-muted-foreground uppercase tracking-wider">Patient Portal</div>
+          </div>
+        </div>
+
+        {!submittedMobile ? (
+          <Panel className="p-6">
+            <h1 className="text-xl font-bold text-foreground mb-1">View Your Bookings</h1>
+            <p className="text-sm text-muted-foreground mb-5">Enter your registered mobile number to see your appointments, status, and reports.</p>
+            <form onSubmit={handleLookup} className="space-y-4">
+              <Field label="Registered Mobile Number *">
+                <Input
+                  value={mobile}
+                  onChange={(e) => setMobile(e.target.value.replace(/\D/g, '').slice(0, 10))}
+                  placeholder="e.g. 9876543210"
+                  inputMode="numeric"
+                  maxLength={10}
+                  required
+                />
+              </Field>
+              {error && <div className="text-xs font-semibold text-destructive">{error}</div>}
+              <Button type="submit" disabled={loading} className="w-full justify-center">
+                {loading ? 'Checking...' : 'View My Bookings'}
+              </Button>
+            </form>
+            <p className="text-[11px] text-muted-foreground mt-4 text-center">OTP verification will be added here soon for added security.</p>
+          </Panel>
+        ) : (
+          <div className="space-y-4">
+            <Panel className="p-5 flex items-center justify-between gap-3 flex-wrap">
+              <div>
+                <div className="font-bold text-foreground">{patientName || 'Patient'}</div>
+                <div className="mono text-xs text-muted-foreground">{uhid ? `${uhid} · ` : ''}{submittedMobile}</div>
+              </div>
+              <Button type="button" variant="secondary" onClick={changeNumber} className="text-xs">Use Different Number</Button>
+            </Panel>
+
+            {error && (
+              <div className="rounded-2xl border border-border bg-card p-5 text-center text-sm text-muted-foreground">{error}</div>
+            )}
+
+            {bookings.length > 0 && (
+              <div className="space-y-3">
+                {bookings.map((b) => (
+                  <Panel key={b.id} className="p-4">
+                    <div className="flex items-start justify-between gap-3 flex-wrap">
+                      <div>
+                        <div className="font-bold text-sm text-foreground">{b.testName}</div>
+                        <div className="text-xs text-muted-foreground mt-0.5">
+                          {formatDay(b.date)} · {b.time} · {b.partnerLabName || b.lab}
+                        </div>
+                        <div className="mono text-[10px] text-muted-foreground mt-1">Booking ID: {b.id}</div>
+                      </div>
+                      <div className="flex flex-col items-end gap-1.5">
+                        <span className={cx('rounded-lg px-2.5 py-1 text-xs font-bold', statusTone(b.status))}>{titleCase(b.status)}</span>
+                        <span className="text-xs font-semibold text-muted-foreground">{money(b.totalPrice)}</span>
+                      </div>
+                    </div>
+                    {b.reportUrl ? (
+                      <a
+                        href={b.reportUrl}
+                        target="_blank"
+                        rel="noreferrer"
+                        className="mt-3 inline-flex items-center gap-1.5 text-xs font-bold text-primary hover:underline"
+                      >
+                        <Download size={13} /> Download Report
+                      </a>
+                    ) : (
+                      <div className="mt-3 text-[11px] text-muted-foreground">
+                        Report {String(b.reportStatus || 'Pending').toLowerCase() === 'pending' ? 'not ready yet' : b.reportStatus}
+                      </div>
+                    )}
+                  </Panel>
+                ))}
+              </div>
+            )}
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
 function App() {
   const [currentUser, setCurrentUser] = useState<UserAccount | null>(() => {
     if (typeof window === 'undefined') return null;
@@ -7899,11 +8035,16 @@ function App() {
   return <QueryClientProvider client={queryClient}>
     <TooltipProvider>
       <WouterRouter base={import.meta.env.BASE_URL.replace(/\/$/, '')}>
-        {currentUser ? (
-          <Router currentUser={currentUser} onLogout={logout} onSwitchUser={handleSetUser} />
-        ) : (
-          <LoginPage onLoginSuccess={handleSetUser} />
-        )}
+        <Switch>
+          <Route path="/patient-portal" component={PatientPortal} />
+          <Route>
+            {() => currentUser ? (
+              <Router currentUser={currentUser} onLogout={logout} onSwitchUser={handleSetUser} />
+            ) : (
+              <LoginPage onLoginSuccess={handleSetUser} />
+            )}
+          </Route>
+        </Switch>
       </WouterRouter>
       <Toaster />
     </TooltipProvider>
