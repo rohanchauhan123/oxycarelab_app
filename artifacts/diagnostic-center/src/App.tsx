@@ -8138,6 +8138,25 @@ function PatientPortal() {
   );
 }
 
+function AppGate({
+  currentUser,
+  onLogout,
+  onLoginSuccess,
+}: {
+  currentUser: UserAccount | null;
+  onLogout: () => void;
+  onLoginSuccess: (user: UserAccount) => void;
+}) {
+  const [location] = useLocation();
+  if (location === '/patient-portal' || location.startsWith('/patient-portal/')) {
+    return <PatientPortal />;
+  }
+  if (currentUser) {
+    return <Router currentUser={currentUser} onLogout={onLogout} onSwitchUser={onLoginSuccess} />;
+  }
+  return <LoginPage onLoginSuccess={onLoginSuccess} />;
+}
+
 function App() {
   const [currentUser, setCurrentUser] = useState<UserAccount | null>(() => {
     if (typeof window === 'undefined') return null;
@@ -8166,16 +8185,7 @@ function App() {
   return <QueryClientProvider client={queryClient}>
     <TooltipProvider>
       <WouterRouter base={import.meta.env.BASE_URL.replace(/\/$/, '')}>
-        <Switch>
-          <Route path="/patient-portal" component={PatientPortal} />
-          <Route>
-            {() => currentUser ? (
-              <Router currentUser={currentUser} onLogout={logout} onSwitchUser={handleSetUser} />
-            ) : (
-              <LoginPage onLoginSuccess={handleSetUser} />
-            )}
-          </Route>
-        </Switch>
+        <AppGate currentUser={currentUser} onLogout={logout} onLoginSuccess={handleSetUser} />
       </WouterRouter>
       <Toaster />
     </TooltipProvider>
