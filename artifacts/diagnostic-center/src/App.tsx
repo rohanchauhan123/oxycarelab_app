@@ -4419,6 +4419,44 @@ function NewAppointment({ currentUser }: { currentUser: UserAccount }) {
             )}
           </div>
 
+          {/* Booking Date & Slot Selection — Lab Visit mode */}
+          {!isHomeCollection && (
+            <div className="space-y-3 border-t border-border pt-5">
+              <div className="flex items-center gap-2 mb-1">
+                <div className="grid size-7 place-items-center rounded-lg bg-primary/10 text-primary">
+                  <CalendarDays size={15} />
+                </div>
+                <span className="font-bold text-sm text-foreground">Appointment Date & Time Slot</span>
+              </div>
+              <div className="grid gap-3 sm:grid-cols-2">
+                <Field label="Appointment Date *">
+                  <Input
+                    type="date"
+                    value={bookingDate}
+                    onChange={(e) => setBookingDate(e.target.value)}
+                    required
+                  />
+                </Field>
+                <Field label="Available Time Slot">
+                  {availableSlots.length === 0 ? (
+                    <div className="rounded-xl border border-dashed border-border bg-muted/30 px-3 py-2 text-xs text-muted-foreground">
+                      No slots available for selected date. Booking will use default 09:30 AM.
+                    </div>
+                  ) : (
+                    <Select value={slotId} onChange={(e) => setSlotId(e.target.value)}>
+                      <option value="">Walk-in / Any available slot</option>
+                      {availableSlots.map((s) => (
+                        <option key={s.id} value={s.id}>
+                          {s.startTime} — {s.endTime} ({Number(s.capacity) - Number(s.booked)} seats left)
+                        </option>
+                      ))}
+                    </Select>
+                  )}
+                </Field>
+              </div>
+            </div>
+          )}
+
           {/* Multiple Test Selection & Cart Table */}
           <div className="space-y-4 border-t border-border pt-5">
             <div className="flex items-center justify-between">
@@ -6696,6 +6734,26 @@ function CSVBulkUploadModal({
     a.click();
   };
 
+  // RFC-4180 compliant CSV row parser — handles quoted fields with embedded commas/newlines
+  const parseCSVLine = (line: string): string[] => {
+    const result: string[] = [];
+    let current = '';
+    let inQuotes = false;
+    for (let i = 0; i < line.length; i++) {
+      const ch = line[i];
+      if (ch === '"') {
+        if (inQuotes && line[i + 1] === '"') { current += '"'; i++; }
+        else { inQuotes = !inQuotes; }
+      } else if (ch === ',' && !inQuotes) {
+        result.push(current.trim()); current = '';
+      } else {
+        current += ch;
+      }
+    }
+    result.push(current.trim());
+    return result;
+  };
+
   const parseAndValidate = (csvText: string) => {
     setRawText(csvText);
     const lines = csvText.trim().split('\n').filter(Boolean);
@@ -6705,15 +6763,15 @@ function CSVBulkUploadModal({
       return;
     }
 
-    const headers = lines[0].split(',').map((h) => h.trim().replace(/^"|"$/g, ''));
+    const headers = parseCSVLine(lines[0]);
     const parsedRows: any[] = [];
     const errors: string[] = [];
 
     for (let i = 1; i < lines.length; i++) {
-      const cols = lines[i].split(',').map((c) => c.trim().replace(/^"|"$/g, ''));
+      const cols = parseCSVLine(lines[i]);
       const rowObj: Record<string, any> = {};
       headers.forEach((h, idx) => {
-        rowObj[h] = cols[idx] || '';
+        rowObj[h] = cols[idx] !== undefined ? cols[idx] : '';
       });
 
       if (isPartnerLabTestType) {
