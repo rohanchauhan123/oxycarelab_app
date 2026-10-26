@@ -1,5 +1,5 @@
 import { Router, type IRouter, type Request, type Response } from "express";
-import { and, eq } from "drizzle-orm";
+import { and, eq, or } from "drizzle-orm";
 import { db, diagnosticRecordsTable } from "@workspace/db";
 import {
   CreateAppointmentBody,
@@ -637,14 +637,53 @@ async function records(entity: Entity): Promise<JsonRecord[]> {
 
 async function record(entity: Entity, id: string): Promise<JsonRecord | undefined> {
   await ensureSeed();
-  const cleanId = id.startsWith(`${entity}:`) ? id : `${entity}:${id}`;
-  const rows: any[] = await db.select().from(diagnosticRecordsTable).where(and(eq(diagnosticRecordsTable.entity, entity), eq(diagnosticRecordsTable.id, cleanId)));
-  return rows[0]?.payload as JsonRecord | undefined;
+  if (!id) return undefined;
+  const decodedId = decodeURIComponent(String(id).trim());
+  const cleanId = decodedId.startsWith(`${entity}:`) ? decodedId : `${entity}:${decodedId}`;
+
+  // 1. Try exact cleanId
+  let rows: any[] = await db.select().from(diagnosticRecordsTable).where(and(eq(diagnosticRecordsTable.entity, entity), eq(diagnosticRecordsTable.id, cleanId)));
+  if (rows[0]?.payload) return rows[0].payload as JsonRecord;
+
+  // 2. Try raw decodedId
+  if (decodedId !== cleanId) {
+    rows = await db.select().from(diagnosticRecordsTable).where(and(eq(diagnosticRecordsTable.entity, entity), eq(diagnosticRecordsTable.id, decodedId)));
+    if (rows[0]?.payload) return rows[0].payload as JsonRecord;
+  }
+
+  // 3. Fallback: match by entity across all records
+  const allRows = await db.select().from(diagnosticRecordsTable).where(eq(diagnosticRecordsTable.entity, entity));
+  const found = allRows.find((r: any) =>
+    r.id === cleanId ||
+    r.id === decodedId ||
+    r.payload?.id === decodedId ||
+    r.payload?.id === cleanId ||
+    (r.payload?.code && String(r.payload.code).toLowerCase() === decodedId.toLowerCase())
+  );
+  return found?.payload as JsonRecord | undefined;
 }
 
 async function save(entity: Entity, payload: JsonRecord) {
-  const cleanId = String(payload.id).startsWith(`${entity}:`) ? String(payload.id) : `${entity}:${String(payload.id)}`;
-  await db.update(diagnosticRecordsTable).set({ payload }).where(eq(diagnosticRecordsTable.id, cleanId));
+  if (!payload || !payload.id) return;
+  const rawId = String(payload.id).trim();
+  const cleanId = rawId.startsWith(`${entity}:`) ? rawId : `${entity}:${rawId}`;
+
+  // Update existing row matching cleanId or rawId
+  const result = await db.update(diagnosticRecordsTable)
+    .set({ payload })
+    .where(or(
+      eq(diagnosticRecordsTable.id, cleanId),
+      eq(diagnosticRecordsTable.id, rawId)
+    ));
+
+  // If no rows updated in database, ensure it is persisted
+  const allRows = await db.select().from(diagnosticRecordsTable).where(eq(diagnosticRecordsTable.entity, entity));
+  const existing = allRows.find((r: any) => r.id === cleanId || r.id === rawId || r.payload?.id === rawId);
+  if (existing) {
+    await db.update(diagnosticRecordsTable).set({ payload }).where(eq(diagnosticRecordsTable.id, existing.id));
+  } else {
+    await db.insert(diagnosticRecordsTable).values({ id: cleanId, entity, payload });
+  }
 }
 
 function parseBody<T>(schema: { parse: (input: unknown) => T }, request: Request) {
@@ -867,87 +906,96 @@ router.post("/doctor-prices", async (req, res) => {
 });
 
 router.post("/doctor-prices/bulk-upload", async (req, res) => {
-  const { rows } = req.body;
-  if (!Array.isArray(rows) || rows.length === 0) {
-    return res.status(400).json({ error: "Invalid rows data provided for bulk upload." });
-  }
+  try {
+    const { rows } = req.body;
+    if (!Array.isArray(rows) || rows.length === 0) {
+      return res.status(400).json({ error: "Invalid rows data provided for bulk upload." });
+    }
 
-  const doctors = await records("doctor");
-  const tests = await records("test");
-  const existingDocPrices = await records("doctor_price");
+    const doctors = await records("doctor");
+    const tests = await records("test");
+    const existingDocPrices = await records("doctor_price");
 
-  let imported = 0;
-  let updated = 0;
-  let failed = 0;
-  const errors: { row: number; error: string }[] = [];
+    let imported = 0;
+    let updated = 0;
+    let failed = 0;
+    const errors: { row: number; error: string }[] = [];
 
-  for (let i = 0; i < rows.length; i++) {
-    const row = rows[i];
-    const rowNum = i + 1;
+    for (let i = 0; i < rows.length; i++) {
+      const row = rows[i];
+      const rowNum = i + 1;
+
+      try {
+        const docName = String(row.doctorName || row.doctorId || row["Doctor Name"] || row["Doctor ID"] || "").trim();
+        const testSearch = String(row.testName || row.testCode || row.testId || row["Test Name"] || row["Test Code"] || "").trim();
+        const customPriceNum = Number(row.customPrice || row.doctorPrice || row["Doctor-specific Price"] || row["Doctor Price"] || row["Custom Price"]);
+        const partnerShareNum = Number(row.partnerShare || row["Partner Share"] || 0);
+        const agentIncentiveNum = Number(row.agentIncentive || row["Agent Incentive"] || 0);
+
+        if (!docName) throw new Error("Doctor Name or ID missing");
+        if (!testSearch) throw new Error("Test Name or Code missing");
+        if (isNaN(customPriceNum) || customPriceNum < 0) throw new Error("Invalid custom price");
+
+        const doctor = doctors.find((d) =>
+          String(d.id).toLowerCase() === docName.toLowerCase() ||
+          String(d.name).toLowerCase().includes(docName.toLowerCase())
+        );
+        if (!doctor) throw new Error(`Doctor '${docName}' not found`);
+
+        const test = tests.find((t) =>
+          String(t.id).toLowerCase() === testSearch.toLowerCase() ||
+          String(t.testCode || "").toLowerCase() === testSearch.toLowerCase() ||
+          String(t.name).toLowerCase().includes(testSearch.toLowerCase())
+        );
+        if (!test) throw new Error(`Test '${testSearch}' not found`);
+
+        const existing = existingDocPrices.find((dp) => dp.doctorId === doctor.id && dp.testId === test.id);
+        const basePrice = Number(test.price);
+        const discount = basePrice - customPriceNum;
+
+        if (existing) {
+          const updatedRecord = {
+            ...existing,
+            customPrice: customPriceNum,
+            discount,
+            basePrice,
+            partnerShare: isNaN(partnerShareNum) ? existing.partnerShare : partnerShareNum,
+            agentIncentive: isNaN(agentIncentiveNum) ? existing.agentIncentive : agentIncentiveNum,
+          };
+          await save("doctor_price", updatedRecord);
+          updated++;
+        } else {
+          const newRecord = {
+            id: uid("dp"),
+            doctorId: doctor.id,
+            doctorName: doctor.name,
+            testId: test.id,
+            testName: test.name,
+            basePrice,
+            customPrice: customPriceNum,
+            discount,
+            partnerShare: isNaN(partnerShareNum) ? Number(test.partnerShare || 0) : partnerShareNum,
+            agentIncentive: isNaN(agentIncentiveNum) ? Number(test.agentIncentive || 0) : agentIncentiveNum,
+          };
+          await db.insert(diagnosticRecordsTable).values({ id: `doctor_price:${newRecord.id}`, entity: "doctor_price", payload: newRecord });
+          imported++;
+        }
+      } catch (err: any) {
+        failed++;
+        errors.push({ row: rowNum, error: err.message || "Import failed" });
+      }
+    }
 
     try {
-      const docName = String(row.doctorName || row.doctorId || row["Doctor Name"] || row["Doctor ID"] || "").trim();
-      const testSearch = String(row.testName || row.testCode || row.testId || row["Test Name"] || row["Test Code"] || "").trim();
-      const customPriceNum = Number(row.customPrice || row.doctorPrice || row["Doctor-specific Price"] || row["Doctor Price"] || row["Custom Price"]);
-      const partnerShareNum = Number(row.partnerShare || row["Partner Share"] || 0);
-      const agentIncentiveNum = Number(row.agentIncentive || row["Agent Incentive"] || 0);
-
-      if (!docName) throw new Error("Doctor Name or ID missing");
-      if (!testSearch) throw new Error("Test Name or Code missing");
-      if (isNaN(customPriceNum) || customPriceNum < 0) throw new Error("Invalid custom price");
-
-      const doctor = doctors.find((d) =>
-        String(d.id).toLowerCase() === docName.toLowerCase() ||
-        String(d.name).toLowerCase().includes(docName.toLowerCase())
-      );
-      if (!doctor) throw new Error(`Doctor '${docName}' not found`);
-
-      const test = tests.find((t) =>
-        String(t.id).toLowerCase() === testSearch.toLowerCase() ||
-        String(t.testCode || "").toLowerCase() === testSearch.toLowerCase() ||
-        String(t.name).toLowerCase().includes(testSearch.toLowerCase())
-      );
-      if (!test) throw new Error(`Test '${testSearch}' not found`);
-
-      const existing = existingDocPrices.find((dp) => dp.doctorId === doctor.id && dp.testId === test.id);
-      const basePrice = Number(test.price);
-      const discount = basePrice - customPriceNum;
-
-      if (existing) {
-        const updatedRecord = {
-          ...existing,
-          customPrice: customPriceNum,
-          discount,
-          basePrice,
-          partnerShare: isNaN(partnerShareNum) ? existing.partnerShare : partnerShareNum,
-          agentIncentive: isNaN(agentIncentiveNum) ? existing.agentIncentive : agentIncentiveNum,
-        };
-        await save("doctor_price", updatedRecord);
-        updated++;
-      } else {
-        const newRecord = {
-          id: uid("dp"),
-          doctorId: doctor.id,
-          doctorName: doctor.name,
-          testId: test.id,
-          testName: test.name,
-          basePrice,
-          customPrice: customPriceNum,
-          discount,
-          partnerShare: isNaN(partnerShareNum) ? Number(test.partnerShare || 0) : partnerShareNum,
-          agentIncentive: isNaN(agentIncentiveNum) ? Number(test.agentIncentive || 0) : agentIncentiveNum,
-        };
-        await db.insert(diagnosticRecordsTable).values({ id: `doctor_price:${newRecord.id}`, entity: "doctor_price", payload: newRecord });
-        imported++;
-      }
-    } catch (err: any) {
-      failed++;
-      errors.push({ row: rowNum, error: err.message || "Import failed" });
+      await logAudit("Admin", "ADMIN", "BULK_UPLOAD_DOCTOR_PRICES", "doctor_price", "bulk", { total: rows.length, imported, updated, failed });
+    } catch (auditErr) {
+      console.warn("Audit log error:", auditErr);
     }
+    return res.json({ totalRows: rows.length, imported, updated, failed, errors });
+  } catch (err: any) {
+    console.error("Doctor prices bulk upload error:", err);
+    return res.status(500).json({ error: err.message || "Bulk upload of doctor prices failed" });
   }
-
-  await logAudit("Admin", "ADMIN", "BULK_UPLOAD_DOCTOR_PRICES", "doctor_price", "bulk", { total: rows.length, imported, updated, failed });
-  return res.json({ totalRows: rows.length, imported, updated, failed, errors });
 });
 
 router.delete("/doctor-prices/:id", async (req, res) => {
@@ -1017,116 +1065,125 @@ router.patch("/tests/:id", async (req, res) => {
 });
 
 router.post("/tests/bulk-upload", async (req, res) => {
-  const { rows } = req.body;
-  if (!Array.isArray(rows) || rows.length === 0) {
-    return res.status(400).json({ error: "No rows provided for bulk test upload." });
-  }
+  try {
+    const { rows } = req.body;
+    if (!Array.isArray(rows) || rows.length === 0) {
+      return res.status(400).json({ error: "No rows provided for bulk test upload." });
+    }
 
-  const existingTests = await records("test");
-  let imported = 0;
-  let updated = 0;
-  let failed = 0;
-  const errors: { row: number; error: string }[] = [];
+    const existingTests = await records("test");
+    let imported = 0;
+    let updated = 0;
+    let failed = 0;
+    const errors: { row: number; error: string }[] = [];
 
-  for (let i = 0; i < rows.length; i++) {
-    const row = rows[i];
-    const rowNum = i + 1;
+    for (let i = 0; i < rows.length; i++) {
+      const row = rows[i];
+      const rowNum = i + 1;
 
-    try {
-      const getVal = (...keys: string[]) => {
-        for (const k of keys) {
-          if (row[k] !== undefined && row[k] !== null && String(row[k]).trim() !== "") return row[k];
-          const lower = k.toLowerCase().replace(/[^a-z0-9]/g, "");
-          for (const [rk, val] of Object.entries(row)) {
-            if (rk.toLowerCase().replace(/[^a-z0-9]/g, "") === lower && val !== undefined && val !== null && String(val).trim() !== "") {
-              return val;
+      try {
+        const getVal = (...keys: string[]) => {
+          for (const k of keys) {
+            if (row[k] !== undefined && row[k] !== null && String(row[k]).trim() !== "") return row[k];
+            const lower = k.toLowerCase().replace(/[^a-z0-9]/g, "");
+            for (const [rk, val] of Object.entries(row)) {
+              if (rk.toLowerCase().replace(/[^a-z0-9]/g, "") === lower && val !== undefined && val !== null && String(val).trim() !== "") {
+                return val;
+              }
             }
           }
+          return "";
+        };
+
+        const parseNum = (val: any, fallback = 0): number => {
+          if (val === undefined || val === null) return fallback;
+          if (typeof val === "number") return isNaN(val) ? fallback : val;
+          const s = String(val).trim().replace(/₹|\$|Rs\.?|,|\s/gi, "");
+          if (s === "" || s === "-") return fallback;
+          const n = Number(s);
+          return isNaN(n) ? fallback : n;
+        };
+
+        const name = String(getVal("name", "Test Name", "testName", "test_name", "investigation")).trim();
+        const testCode = String(getVal("testCode", "Test Code", "test_code", "code")).trim();
+        const priceNum = parseNum(getVal("price", "normalPrice", "Normal Price", "MRP", "Price", "rate"));
+        const b2bCostNum = parseNum(getVal("b2bCost", "B2B Cost", "b2b_cost", "b2b", "Lab Cost", "Cost"));
+        const partnerShareNum = parseNum(getVal("partnerShare", "Partner share", "Partner Share", "partner_share", "share"));
+        const agentIncentiveNum = parseNum(getVal("agentIncentive", "Agent Incentive", "agent_incentive", "incentive"));
+        const instructionsText = String(getVal("instructions", "Instructions", "Patient Preparation", "preparation")).trim();
+        const sampleTypeText = String(getVal("sampleType", "Sample Type", "sample_type")).trim() || "Blood";
+        const turnaroundText = String(getVal("turnaround", "TURNAROUND", "TAT", "Turnaround", "tat")).trim() || "24 hours";
+        const fastingText = String(getVal("fasting", "Fasting", "Fasting.1")).trim() || "Not Required";
+        const deptText = String(getVal("department", "Category", "Department", "category", "dept")).trim() || "Pathology";
+
+        if (!name) throw new Error("Test Name is required");
+        if (isNaN(priceNum) || priceNum <= 0) throw new Error(`Valid positive price is required (got '${getVal("price", "Price", "Normal Price")}')`);
+
+        const existingIndex = existingTests.findIndex((t) =>
+          (testCode && String(t.testCode).toLowerCase() === testCode.toLowerCase()) ||
+          String(t.name).toLowerCase() === name.toLowerCase()
+        );
+
+        if (existingIndex !== -1) {
+          const existing = existingTests[existingIndex];
+          const updatedTest = {
+            ...existing,
+            testCode: testCode || existing.testCode,
+            name: name || existing.name,
+            price: priceNum,
+            b2bCost: b2bCostNum !== 0 ? b2bCostNum : (existing.b2bCost ?? 0),
+            partnerShare: partnerShareNum,
+            agentIncentive: agentIncentiveNum,
+            instructions: instructionsText || existing.instructions || (fastingText ? `Fasting: ${fastingText}` : "No special preparation required."),
+            sampleType: sampleTypeText || existing.sampleType,
+            turnaround: turnaroundText || existing.turnaround,
+            fasting: fastingText || existing.fasting,
+            department: deptText || existing.department,
+          };
+          await save("test", updatedTest);
+          existingTests[existingIndex] = updatedTest;
+          updated++;
+        } else {
+          const newTest: any = {
+            id: `test-${uid("t")}`,
+            testCode: testCode || `TEST-${Math.floor(100 + Math.random() * 900)}`,
+            name,
+            shortName: row.shortName || name.slice(0, 8),
+            department: deptText,
+            lab: row.lab || "Central Lab",
+            sampleType: sampleTypeText,
+            turnaround: turnaroundText,
+            fasting: fastingText,
+            duration: 30,
+            price: priceNum,
+            b2bCost: b2bCostNum,
+            partnerShare: partnerShareNum,
+            agentIncentive: agentIncentiveNum,
+            instructions: instructionsText || (fastingText ? `Fasting: ${fastingText}` : "No special preparation required."),
+            active: true,
+          };
+          newTest.parameters = getResolvedParameters(newTest);
+          newTest.parameterCount = newTest.parameters.length;
+          await db.insert(diagnosticRecordsTable).values({ id: `test:${newTest.id}`, entity: "test", payload: newTest });
+          existingTests.push(newTest);
+          imported++;
         }
-        return "";
-      };
-
-      const parseNum = (val: any, fallback = 0): number => {
-        if (val === undefined || val === null) return fallback;
-        if (typeof val === "number") return isNaN(val) ? fallback : val;
-        const s = String(val).trim().replace(/₹|\$|Rs\.?|,|\s/gi, "");
-        if (s === "" || s === "-") return fallback;
-        const n = Number(s);
-        return isNaN(n) ? fallback : n;
-      };
-
-      const name = String(getVal("name", "Test Name", "testName", "test_name", "investigation")).trim();
-      const testCode = String(getVal("testCode", "Test Code", "test_code", "code")).trim();
-      const priceNum = parseNum(getVal("price", "normalPrice", "Normal Price", "MRP", "Price", "rate"));
-      const b2bCostNum = parseNum(getVal("b2bCost", "B2B Cost", "b2b_cost", "b2b", "Lab Cost", "Cost"));
-      const partnerShareNum = parseNum(getVal("partnerShare", "Partner share", "Partner Share", "partner_share", "share"));
-      const agentIncentiveNum = parseNum(getVal("agentIncentive", "Agent Incentive", "agent_incentive", "incentive"));
-      const instructionsText = String(getVal("instructions", "Instructions", "Patient Preparation", "preparation")).trim();
-      const sampleTypeText = String(getVal("sampleType", "Sample Type", "sample_type")).trim() || "Blood";
-      const turnaroundText = String(getVal("turnaround", "TURNAROUND", "TAT", "Turnaround", "tat")).trim() || "24 hours";
-      const fastingText = String(getVal("fasting", "Fasting", "Fasting.1")).trim() || "Not Required";
-      const deptText = String(getVal("department", "Category", "Department", "category", "dept")).trim() || "Pathology";
-
-      if (!name) throw new Error("Test Name is required");
-      if (isNaN(priceNum) || priceNum <= 0) throw new Error(`Valid positive price is required (got '${getVal("price", "Price", "Normal Price")}')`);
-
-      const existingIndex = existingTests.findIndex((t) =>
-        (testCode && String(t.testCode).toLowerCase() === testCode.toLowerCase()) ||
-        String(t.name).toLowerCase() === name.toLowerCase()
-      );
-
-      if (existingIndex !== -1) {
-        const existing = existingTests[existingIndex];
-        const updatedTest = {
-          ...existing,
-          testCode: testCode || existing.testCode,
-          name: name || existing.name,
-          price: priceNum,
-          b2bCost: b2bCostNum !== 0 ? b2bCostNum : (existing.b2bCost ?? 0),
-          partnerShare: partnerShareNum,
-          agentIncentive: agentIncentiveNum,
-          instructions: instructionsText || existing.instructions || (fastingText ? `Fasting: ${fastingText}` : "No special preparation required."),
-          sampleType: sampleTypeText || existing.sampleType,
-          turnaround: turnaroundText || existing.turnaround,
-          fasting: fastingText || existing.fasting,
-          department: deptText || existing.department,
-        };
-        await save("test", updatedTest);
-        existingTests[existingIndex] = updatedTest;
-        updated++;
-      } else {
-        const newTest: any = {
-          id: `test-${uid("t")}`,
-          testCode: testCode || `TEST-${Math.floor(100 + Math.random() * 900)}`,
-          name,
-          shortName: row.shortName || name.slice(0, 8),
-          department: deptText,
-          lab: row.lab || "Central Lab",
-          sampleType: sampleTypeText,
-          turnaround: turnaroundText,
-          fasting: fastingText,
-          duration: 30,
-          price: priceNum,
-          b2bCost: b2bCostNum,
-          partnerShare: partnerShareNum,
-          agentIncentive: agentIncentiveNum,
-          instructions: instructionsText || (fastingText ? `Fasting: ${fastingText}` : "No special preparation required."),
-          active: true,
-        };
-        newTest.parameters = getResolvedParameters(newTest);
-        newTest.parameterCount = newTest.parameters.length;
-        await db.insert(diagnosticRecordsTable).values({ id: `test:${newTest.id}`, entity: "test", payload: newTest });
-        existingTests.push(newTest);
-        imported++;
+      } catch (err: any) {
+        failed++;
+        errors.push({ row: rowNum, error: err.message || "Failed to process row" });
       }
-    } catch (err: any) {
-      failed++;
-      errors.push({ row: rowNum, error: err.message || "Failed to process row" });
     }
-  }
 
-  await logAudit("Admin", "ADMIN", "BULK_UPLOAD_TESTS", "test", "bulk", { total: rows.length, imported, updated, failed });
-  return res.json({ totalRows: rows.length, imported, updated, failed, errors });
+    try {
+      await logAudit("Admin", "ADMIN", "BULK_UPLOAD_TESTS", "test", "bulk", { total: rows.length, imported, updated, failed });
+    } catch (auditErr) {
+      console.warn("Audit logging failed:", auditErr);
+    }
+    return res.json({ totalRows: rows.length, imported, updated, failed, errors });
+  } catch (err: any) {
+    console.error("Bulk upload tests error:", err);
+    return res.status(500).json({ error: err.message || "Bulk test upload failed" });
+  }
 });
 
 // Master Data: Health Packages
@@ -1438,112 +1495,121 @@ router.delete("/partner-labs/:id/tests/:testId", async (req, res) => {
 
 // Bulk CSV Upload of tests into a single partner lab's catalogue (insert/update by Test Code or Name)
 router.post("/partner-labs/:id/tests/bulk-upload", async (req, res) => {
-  const lab: any = await record("partner_lab", req.params.id);
-  if (!lab) return res.status(404).json({ error: "Partner lab not found." });
+  try {
+    const lab: any = await record("partner_lab", req.params.id);
+    if (!lab) return res.status(404).json({ error: `Partner lab '${req.params.id}' not found.` });
 
-  const { rows } = req.body;
-  if (!Array.isArray(rows) || rows.length === 0) {
-    return res.status(400).json({ error: "No rows provided for bulk test upload." });
-  }
+    const { rows } = req.body;
+    if (!Array.isArray(rows) || rows.length === 0) {
+      return res.status(400).json({ error: "No rows provided for bulk test upload." });
+    }
 
-  const existingTests: any[] = Array.isArray(lab.tests) ? [...lab.tests] : [];
-  let imported = 0;
-  let updated = 0;
-  let failed = 0;
-  const errors: { row: number; error: string }[] = [];
+    const existingTests: any[] = Array.isArray(lab.tests) ? [...lab.tests] : [];
+    let imported = 0;
+    let updated = 0;
+    let failed = 0;
+    const errors: { row: number; error: string }[] = [];
 
-  for (let i = 0; i < rows.length; i++) {
-    const row = rows[i];
-    const rowNum = i + 1;
+    for (let i = 0; i < rows.length; i++) {
+      const row = rows[i];
+      const rowNum = i + 1;
 
-    try {
-      const getVal = (...keys: string[]) => {
-        for (const k of keys) {
-          if (row[k] !== undefined && row[k] !== null && String(row[k]).trim() !== "") return row[k];
-          const lower = k.toLowerCase().replace(/[^a-z0-9]/g, "");
-          for (const [rk, val] of Object.entries(row)) {
-            if (rk.toLowerCase().replace(/[^a-z0-9]/g, "") === lower && val !== undefined && val !== null && String(val).trim() !== "") {
-              return val;
+      try {
+        const getVal = (...keys: string[]) => {
+          for (const k of keys) {
+            if (row[k] !== undefined && row[k] !== null && String(row[k]).trim() !== "") return row[k];
+            const lower = k.toLowerCase().replace(/[^a-z0-9]/g, "");
+            for (const [rk, val] of Object.entries(row)) {
+              if (rk.toLowerCase().replace(/[^a-z0-9]/g, "") === lower && val !== undefined && val !== null && String(val).trim() !== "") {
+                return val;
+              }
             }
           }
-        }
-        return "";
-      };
-
-      const parseNum = (val: any, fallback = 0): number => {
-        if (val === undefined || val === null) return fallback;
-        if (typeof val === "number") return isNaN(val) ? fallback : val;
-        const s = String(val).trim().replace(/₹|\$|Rs\.?|,|\s/gi, "");
-        if (s === "" || s === "-") return fallback;
-        const n = Number(s);
-        return isNaN(n) ? fallback : n;
-      };
-
-      const name = String(getVal("name", "Test Name", "testName", "test_name", "investigation")).trim();
-      const testCode = String(getVal("testCode", "Test Code", "test_code", "code")).trim();
-      const priceNum = parseNum(getVal("price", "normalPrice", "Normal Price", "MRP", "Price", "rate"));
-      const b2bCostNum = parseNum(getVal("b2bCost", "B2B Cost", "b2b_cost", "b2b", "Lab Cost", "Cost"));
-      const partnerShareNum = parseNum(getVal("partnerShare", "Partner share", "Partner Share", "partner_share", "share"));
-      const agentIncentiveNum = parseNum(getVal("agentIncentive", "Agent Incentive", "agent_incentive", "incentive"));
-      const category = String(getVal("category", "Category", "Department", "department", "dept")).trim() || "Pathology";
-      const turnaround = String(getVal("turnaround", "TURNAROUND", "TAT", "Turnaround", "tat")).trim() || "24 hours";
-      const sampleType = String(getVal("sampleType", "Sample Type", "sample_type")).trim() || "Blood";
-      const fasting = String(getVal("fasting", "Fasting", "Fasting.1")).trim() || "Not Required";
-      const instructionsText = String(getVal("instructions", "Instructions", "Patient Preparation", "preparation")).trim();
-
-      if (!name) throw new Error("Test Name is required");
-      if (isNaN(priceNum) || priceNum <= 0) throw new Error(`Valid positive price is required (got '${getVal("price", "Price", "Normal Price")}')`);
-
-      const existingIndex = existingTests.findIndex((t: any) =>
-        (testCode && String(t.testCode).toLowerCase() === testCode.toLowerCase()) ||
-        String(t.name).toLowerCase() === name.toLowerCase()
-      );
-
-      if (existingIndex !== -1) {
-        existingTests[existingIndex] = {
-          ...existingTests[existingIndex],
-          price: priceNum,
-          b2bCost: isNaN(b2bCostNum) ? existingTests[existingIndex].b2bCost : b2bCostNum,
-          partnerShare: isNaN(partnerShareNum) ? existingTests[existingIndex].partnerShare : partnerShareNum,
-          agentIncentive: isNaN(agentIncentiveNum) ? existingTests[existingIndex].agentIncentive : agentIncentiveNum,
-          category: category || existingTests[existingIndex].category,
-          turnaround: turnaround || existingTests[existingIndex].turnaround,
-          sampleType: sampleType || existingTests[existingIndex].sampleType,
-          fasting: fasting || existingTests[existingIndex].fasting,
-          instructions: instructionsText || existingTests[existingIndex].instructions,
-          updatedAt: new Date().toISOString(),
+          return "";
         };
-        updated++;
-      } else {
-        existingTests.push({
-          id: `plt-${uid("test")}`,
-          name,
-          testCode: testCode || `${name.slice(0, 3).toUpperCase()}-01`,
-          category: category || "Pathology",
-          price: priceNum,
-          b2bCost: isNaN(b2bCostNum) ? 0 : b2bCostNum,
-          partnerShare: isNaN(partnerShareNum) ? 0 : partnerShareNum,
-          agentIncentive: isNaN(agentIncentiveNum) ? 0 : agentIncentiveNum,
-          turnaround: turnaround || "Same Day",
-          sampleType: sampleType || "Blood",
-          fasting: fasting || "Not Required",
-          instructions: instructionsText || "Standard preparation",
-          parameters: [],
-          active: true,
-          addedAt: new Date().toISOString(),
-        });
-        imported++;
-      }
-    } catch (err: any) {
-      failed++;
-      errors.push({ row: rowNum, error: err.message || "Failed to process row" });
-    }
-  }
 
-  const updatedLab = { ...lab, tests: existingTests, updatedAt: new Date().toISOString() };
-  await save("partner_lab", updatedLab);
-  await logAudit("Super Admin", "SUPER_ADMIN", "BULK_UPLOAD_PARTNER_LAB_TESTS", "partner_lab", String(lab.id), { total: rows.length, imported, updated, failed });
-  return res.json({ totalRows: rows.length, imported, updated, failed, errors, lab: updatedLab });
+        const parseNum = (val: any, fallback = 0): number => {
+          if (val === undefined || val === null) return fallback;
+          if (typeof val === "number") return isNaN(val) ? fallback : val;
+          const s = String(val).trim().replace(/₹|\$|Rs\.?|,|\s/gi, "");
+          if (s === "" || s === "-") return fallback;
+          const n = Number(s);
+          return isNaN(n) ? fallback : n;
+        };
+
+        const name = String(getVal("name", "Test Name", "testName", "test_name", "investigation")).trim();
+        const testCode = String(getVal("testCode", "Test Code", "test_code", "code")).trim();
+        const priceNum = parseNum(getVal("price", "normalPrice", "Normal Price", "MRP", "Price", "rate"));
+        const b2bCostNum = parseNum(getVal("b2bCost", "B2B Cost", "b2b_cost", "b2b", "Lab Cost", "Cost"));
+        const partnerShareNum = parseNum(getVal("partnerShare", "Partner share", "Partner Share", "partner_share", "share"));
+        const agentIncentiveNum = parseNum(getVal("agentIncentive", "Agent Incentive", "agent_incentive", "incentive"));
+        const category = String(getVal("category", "Category", "Department", "department", "dept")).trim() || "Pathology";
+        const turnaround = String(getVal("turnaround", "TURNAROUND", "TAT", "Turnaround", "tat")).trim() || "24 hours";
+        const sampleType = String(getVal("sampleType", "Sample Type", "sample_type")).trim() || "Blood";
+        const fasting = String(getVal("fasting", "Fasting", "Fasting.1")).trim() || "Not Required";
+        const instructionsText = String(getVal("instructions", "Instructions", "Patient Preparation", "preparation")).trim();
+
+        if (!name) throw new Error("Test Name is required");
+        if (isNaN(priceNum) || priceNum <= 0) throw new Error(`Valid positive price is required (got '${getVal("price", "Price", "Normal Price")}')`);
+
+        const existingIndex = existingTests.findIndex((t: any) =>
+          (testCode && String(t.testCode).toLowerCase() === testCode.toLowerCase()) ||
+          String(t.name).toLowerCase() === name.toLowerCase()
+        );
+
+        if (existingIndex !== -1) {
+          existingTests[existingIndex] = {
+            ...existingTests[existingIndex],
+            price: priceNum,
+            b2bCost: isNaN(b2bCostNum) ? existingTests[existingIndex].b2bCost : b2bCostNum,
+            partnerShare: isNaN(partnerShareNum) ? existingTests[existingIndex].partnerShare : partnerShareNum,
+            agentIncentive: isNaN(agentIncentiveNum) ? existingTests[existingIndex].agentIncentive : agentIncentiveNum,
+            category: category || existingTests[existingIndex].category,
+            turnaround: turnaround || existingTests[existingIndex].turnaround,
+            sampleType: sampleType || existingTests[existingIndex].sampleType,
+            fasting: fasting || existingTests[existingIndex].fasting,
+            instructions: instructionsText || existingTests[existingIndex].instructions,
+            updatedAt: new Date().toISOString(),
+          };
+          updated++;
+        } else {
+          existingTests.push({
+            id: `plt-${uid("test")}`,
+            name,
+            testCode: testCode || `${name.slice(0, 3).toUpperCase()}-01`,
+            category: category || "Pathology",
+            price: priceNum,
+            b2bCost: isNaN(b2bCostNum) ? 0 : b2bCostNum,
+            partnerShare: isNaN(partnerShareNum) ? 0 : partnerShareNum,
+            agentIncentive: isNaN(agentIncentiveNum) ? 0 : agentIncentiveNum,
+            turnaround: turnaround || "Same Day",
+            sampleType: sampleType || "Blood",
+            fasting: fasting || "Not Required",
+            instructions: instructionsText || "Standard preparation",
+            parameters: [],
+            active: true,
+            addedAt: new Date().toISOString(),
+          });
+          imported++;
+        }
+      } catch (err: any) {
+        failed++;
+        errors.push({ row: rowNum, error: err.message || "Failed to process row" });
+      }
+    }
+
+    const updatedLab = { ...lab, tests: existingTests, updatedAt: new Date().toISOString() };
+    await save("partner_lab", updatedLab);
+    try {
+      await logAudit("Super Admin", "SUPER_ADMIN", "BULK_UPLOAD_PARTNER_LAB_TESTS", "partner_lab", String(lab.id), { total: rows.length, imported, updated, failed });
+    } catch (auditErr) {
+      console.warn("Audit logging failed:", auditErr);
+    }
+    return res.json({ totalRows: rows.length, imported, updated, failed, errors, lab: updatedLab });
+  } catch (err: any) {
+    console.error("Partner lab bulk upload error:", err);
+    return res.status(500).json({ error: err.message || "Partner lab bulk test upload failed" });
+  }
 });
 
 // Dashboard Summary
