@@ -6756,7 +6756,8 @@ function CSVBulkUploadModal({
 
   const parseAndValidate = (csvText: string) => {
     setRawText(csvText);
-    const lines = csvText.trim().split('\n').filter(Boolean);
+    const cleanText = csvText.replace(/^\uFEFF/, '').trim();
+    const lines = cleanText.split(/\r?\n/).filter(Boolean);
     if (lines.length < 2) {
       setValidationErrors(['CSV file must contain a header row and at least 1 data row.']);
       setRows([]);
@@ -6767,6 +6768,19 @@ function CSVBulkUploadModal({
     const parsedRows: any[] = [];
     const errors: string[] = [];
 
+    const getField = (obj: Record<string, any>, ...keys: string[]) => {
+      for (const k of keys) {
+        if (obj[k] !== undefined && obj[k] !== '') return obj[k];
+        const lower = k.toLowerCase().replace(/[^a-z0-9]/g, '');
+        for (const [rk, val] of Object.entries(obj)) {
+          if (rk.toLowerCase().replace(/[^a-z0-9]/g, '') === lower && val !== undefined && val !== '') {
+            return val;
+          }
+        }
+      }
+      return '';
+    };
+
     for (let i = 1; i < lines.length; i++) {
       const cols = parseCSVLine(lines[i]);
       const rowObj: Record<string, any> = {};
@@ -6775,19 +6789,19 @@ function CSVBulkUploadModal({
       });
 
       if (isPartnerLabTestType) {
-        const name = String(rowObj['Test Name'] || rowObj['name'] || '').trim();
-        const price = Number(rowObj['Price'] || rowObj['price'] || rowObj['MRP']);
+        const name = String(getField(rowObj, 'Test Name', 'name', 'testName', 'test_name') || '').trim();
+        const price = Number(getField(rowObj, 'Price', 'price', 'MRP', 'rate', 'Normal Price'));
         if (!name) errors.push(`Row ${i}: Missing Test Name.`);
         if (isNaN(price) || price <= 0) errors.push(`Row ${i}: Invalid Price.`);
       } else if (isTestType) {
-        const name = String(rowObj['Test Name'] || rowObj['name'] || '').trim();
-        const price = Number(rowObj['Normal Price'] || rowObj['price'] || rowObj['MRP']);
+        const name = String(getField(rowObj, 'Test Name', 'name', 'testName', 'test_name') || '').trim();
+        const price = Number(getField(rowObj, 'Normal Price', 'Price', 'price', 'MRP', 'rate', 'normalPrice'));
         if (!name) errors.push(`Row ${i}: Missing Test Name.`);
         if (isNaN(price) || price <= 0) errors.push(`Row ${i}: Invalid Normal Price.`);
       } else {
-        const doc = String(rowObj['Doctor Name'] || rowObj['doctorId'] || '').trim();
-        const test = String(rowObj['Test Name'] || rowObj['Test Code'] || rowObj['testId'] || '').trim();
-        const customP = Number(rowObj['Doctor Price'] || rowObj['Doctor-specific Price'] || rowObj['customPrice']);
+        const doc = String(getField(rowObj, 'Doctor Name', 'doctorId', 'doctorName', 'doctor') || '').trim();
+        const test = String(getField(rowObj, 'Test Name', 'Test Code', 'testId', 'testName', 'testCode') || '').trim();
+        const customP = Number(getField(rowObj, 'Doctor Price', 'Doctor-specific Price', 'customPrice', 'price'));
         if (!doc) errors.push(`Row ${i}: Missing Doctor Name or ID.`);
         if (!test) errors.push(`Row ${i}: Missing Test Code or Name.`);
         if (isNaN(customP) || customP < 0) errors.push(`Row ${i}: Invalid Doctor-specific Price.`);
@@ -6838,8 +6852,16 @@ function CSVBulkUploadModal({
     }
   };
 
+  const handleModalClose = () => {
+    if (resultSummary) {
+      onSuccess();
+    } else {
+      onClose();
+    }
+  };
+
   return (
-    <ModalPortal isOpen={true} onClose={onClose} maxWidth="max-w-3xl">
+    <ModalPortal isOpen={true} onClose={handleModalClose} maxWidth="max-w-3xl">
       <div className="flex shrink-0 items-center justify-between border-b border-border p-6 pb-4 bg-card">
         <div>
           <h2 className="text-xl font-bold">
@@ -6847,7 +6869,7 @@ function CSVBulkUploadModal({
           </h2>
           <p className="text-xs text-muted-foreground mt-1">Upload CSV or paste CSV text to bulk insert/update pricing and instructions.</p>
         </div>
-        <button onClick={onClose} className="grid size-8 place-items-center rounded-xl hover:bg-muted text-muted-foreground"><X size={16} /></button>
+        <button onClick={handleModalClose} className="grid size-8 place-items-center rounded-xl hover:bg-muted text-muted-foreground"><X size={16} /></button>
       </div>
 
       <div className="flex-1 overflow-y-auto p-6 scrollbar-thin">
@@ -6991,8 +7013,12 @@ function Tests({ role }: { role: Role }) {
   const loadTests = async () => {
     setLoading(true);
     try {
-      const q = new URLSearchParams({ search, department });
-      const res = await fetch(`/api/tests?${q.toString()}`);
+      const params: Record<string, string> = {};
+      if (search) params.search = search;
+      if (dept && dept !== 'All') params.department = dept;
+      const q = new URLSearchParams(params);
+      const url = q.toString() ? `/api/tests?${q.toString()}` : '/api/tests';
+      const res = await fetch(url);
       setTests(await res.json());
     } catch {
       toast.error('Failed to load tests');

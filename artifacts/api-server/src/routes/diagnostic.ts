@@ -637,12 +637,14 @@ async function records(entity: Entity): Promise<JsonRecord[]> {
 
 async function record(entity: Entity, id: string): Promise<JsonRecord | undefined> {
   await ensureSeed();
-  const rows: any[] = await db.select().from(diagnosticRecordsTable).where(and(eq(diagnosticRecordsTable.entity, entity), eq(diagnosticRecordsTable.id, `${entity}:${id}`)));
+  const cleanId = id.startsWith(`${entity}:`) ? id : `${entity}:${id}`;
+  const rows: any[] = await db.select().from(diagnosticRecordsTable).where(and(eq(diagnosticRecordsTable.entity, entity), eq(diagnosticRecordsTable.id, cleanId)));
   return rows[0]?.payload as JsonRecord | undefined;
 }
 
 async function save(entity: Entity, payload: JsonRecord) {
-  await db.update(diagnosticRecordsTable).set({ payload }).where(eq(diagnosticRecordsTable.id, `${entity}:${String(payload.id)}`));
+  const cleanId = String(payload.id).startsWith(`${entity}:`) ? String(payload.id) : `${entity}:${String(payload.id)}`;
+  await db.update(diagnosticRecordsTable).set({ payload }).where(eq(diagnosticRecordsTable.id, cleanId));
 }
 
 function parseBody<T>(schema: { parse: (input: unknown) => T }, request: Request) {
@@ -1031,25 +1033,40 @@ router.post("/tests/bulk-upload", async (req, res) => {
     const rowNum = i + 1;
 
     try {
-      const name = String(row.name || row["Test Name"] || "").trim();
-      const testCode = String(row.testCode || row["Test Code"] || "").trim();
-      const priceNum = Number(row.price || row.normalPrice || row["Normal Price"] || row["MRP"]);
-      const partnerShareNum = Number(row.partnerShare || row["Partner Share"] || 0);
-      const agentIncentiveNum = Number(row.agentIncentive || row["Agent Incentive"] || 0);
-      const instructionsText = String(row.instructions || row["Instructions"] || row["Patient Preparation"] || "").trim();
-      const sampleTypeText = String(row.sampleType || row["Sample Type"] || "").trim();
-      const turnaroundText = String(row.turnaround || row["TAT"] || row["Turnaround"] || "").trim();
-      const fastingText = String(row.fasting || row["Fasting"] || "").trim();
+      const getVal = (...keys: string[]) => {
+        for (const k of keys) {
+          if (row[k] !== undefined && row[k] !== null && String(row[k]).trim() !== "") return row[k];
+          const lower = k.toLowerCase().replace(/[^a-z0-9]/g, "");
+          for (const [rk, val] of Object.entries(row)) {
+            if (rk.toLowerCase().replace(/[^a-z0-9]/g, "") === lower && val !== undefined && val !== null && String(val).trim() !== "") {
+              return val;
+            }
+          }
+        }
+        return "";
+      };
+
+      const name = String(getVal("name", "Test Name", "testName", "test_name", "investigation")).trim();
+      const testCode = String(getVal("testCode", "Test Code", "test_code", "code")).trim();
+      const priceNum = Number(getVal("price", "normalPrice", "Normal Price", "MRP", "Price", "rate"));
+      const partnerShareNum = Number(getVal("partnerShare", "Partner Share", "partner_share") || 0);
+      const agentIncentiveNum = Number(getVal("agentIncentive", "Agent Incentive", "agent_incentive") || 0);
+      const instructionsText = String(getVal("instructions", "Instructions", "Patient Preparation", "preparation")).trim();
+      const sampleTypeText = String(getVal("sampleType", "Sample Type", "sample_type")).trim();
+      const turnaroundText = String(getVal("turnaround", "TAT", "Turnaround", "tat")).trim();
+      const fastingText = String(getVal("fasting", "Fasting")).trim();
+      const deptText = String(getVal("department", "Category", "Department", "category", "dept")).trim();
 
       if (!name) throw new Error("Test Name is required");
       if (isNaN(priceNum) || priceNum <= 0) throw new Error("Valid positive price is required");
 
-      const existing = existingTests.find((t) =>
+      const existingIndex = existingTests.findIndex((t) =>
         (testCode && String(t.testCode).toLowerCase() === testCode.toLowerCase()) ||
         String(t.name).toLowerCase() === name.toLowerCase()
       );
 
-      if (existing) {
+      if (existingIndex !== -1) {
+        const existing = existingTests[existingIndex];
         const updatedTest = {
           ...existing,
           price: priceNum,
@@ -1059,17 +1076,18 @@ router.post("/tests/bulk-upload", async (req, res) => {
           sampleType: sampleTypeText || existing.sampleType,
           turnaround: turnaroundText || existing.turnaround,
           fasting: fastingText || existing.fasting,
-          department: row.department || row["Category"] || row["Department"] || existing.department,
+          department: deptText || existing.department,
         };
         await save("test", updatedTest);
+        existingTests[existingIndex] = updatedTest;
         updated++;
       } else {
-        const newTest = {
+        const newTest: any = {
           id: `test-${uid("t")}`,
           testCode: testCode || `TEST-${Math.floor(100 + Math.random() * 900)}`,
           name,
           shortName: row.shortName || name.slice(0, 8),
-          department: row.department || row["Category"] || row["Department"] || "General",
+          department: deptText || "General",
           lab: row.lab || "Central Lab",
           sampleType: sampleTypeText || "Blood",
           turnaround: turnaroundText || "24 hours",
@@ -1081,7 +1099,10 @@ router.post("/tests/bulk-upload", async (req, res) => {
           instructions: instructionsText || "No special preparation required.",
           active: true,
         };
+        newTest.parameters = getResolvedParameters(newTest);
+        newTest.parameterCount = newTest.parameters.length;
         await db.insert(diagnosticRecordsTable).values({ id: `test:${newTest.id}`, entity: "test", payload: newTest });
+        existingTests.push(newTest);
         imported++;
       }
     } catch (err: any) {
@@ -1549,11 +1570,24 @@ function filterAppointments(items: any[], query: any) {
 }
 
 router.get("/appointments", async (req, res) => {
-  const params = ListAppointmentsQueryParams.parse(req.query);
-  let items = await records("appointment");
-  items = filterAppointments(items, { ...req.query, date: params.date, status: params.status, search: params.search });
-  const start = (params.page - 1) * params.pageSize;
-  res.json(ListAppointmentsResponse.parse({ items: items.slice(start, start + params.pageSize), page: params.page, pageSize: params.pageSize, total: items.length }));
+  try {
+    const params = ListAppointmentsQueryParams.parse(req.query);
+    let items = await records("appointment");
+    items = filterAppointments(items, { ...req.query, date: params.date, status: params.status, search: params.search });
+    const start = (params.page - 1) * params.pageSize;
+    const paginatedItems = items.slice(start, start + params.pageSize).map((item) => ({
+      ...item,
+      amount: Number(item.amount ?? item.totalPrice ?? 0),
+    }));
+    return res.json({
+      items: paginatedItems,
+      page: params.page,
+      pageSize: params.pageSize,
+      total: items.length,
+    });
+  } catch (err: any) {
+    return res.status(500).json({ error: err.message || "Failed to fetch appointments" });
+  }
 });
 
 // CSV Export endpoint — respects all the same filters
