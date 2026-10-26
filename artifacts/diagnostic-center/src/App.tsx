@@ -6719,10 +6719,15 @@ function CSVBulkUploadModal({
 
   const downloadSampleTemplate = () => {
     let csv = '';
-    if (isPartnerLabTestType) {
-      csv = 'Test Code,Test Name,Category,Price,B2B Cost,Partner Share,Agent Incentive,Turnaround,Sample Type,Fasting,Instructions\nCBC-01,Complete Blood Count,Pathology,450,200,100,50,4 hours,EDTA Whole Blood 3ml,Not Required,No fasting required\nTHY-01,Thyroid Profile,Biochemistry,850,350,200,100,6 hours,Serum 2ml,Overnight Fasting,Overnight fasting recommended';
-    } else if (isTestType) {
-      csv = 'Test Code,Test Name,Normal Price,Partner Share,Agent Incentive,Sample Type,TAT,Fasting,Instructions,Category\nCBC-01,Complete Blood Count,450,100,50,EDTA Whole Blood,4 Hours,Not Required,No special preparation required.,Pathology\nTHY-01,Thyroid Profile,850,200,100,Serum,6 Hours,Overnight Fasting,Overnight fasting recommended.,Pathology\nMRI-01,MRI Brain,5200,1000,400,N/A - Imaging / Scan,Same Day,Not Required,Remove metal objects before scan.,Radiology';
+    if (isPartnerLabTestType || isTestType) {
+      csv = 'Test Code,Test Name,Category,Price,B2B Cost,Partner share,Agent Incentive,TURNAROUND,Sample Type,Fasting\n' +
+        'CBC-01,Lipid Profile,Pathology,425,297,127,0,24hrs,Blood,12 Hours Fasting\n' +
+        'THY-01,Liver Function Test,Pathology,425,297,127,0,24hrs,Blood,No Fasting Required\n' +
+        'THY-02,Complete Hemogram,Pathology,425,297,127,0,24hrs,Blood,No Fasting Required\n' +
+        'THY-03,"Thyroid Profile-Total (T3, T4 & TSH Ultra-sensitive)",Pathology,340,238,102,0,24hrs,Blood,No Fasting Required\n' +
+        'THY-04,Iron Studies,Pathology,255,178,76,0,24hrs,Blood,No Fasting Required\n' +
+        'THY-05,Kidney Function Test,Pathology,425,297,127,0,24hrs,Blood,No Fasting Required\n' +
+        'THY-06,"Thyroid Profile-Free (FT3, FT4 & TSH)",Pathology,595,416,178,0,24hrs,Blood,No Fasting Required';
     } else {
       csv = 'Doctor Name,Test Code,Test Name,Doctor Price,Partner Share,Agent Incentive\nDr. Kavita Rao,PET-01,PET CT Scan,7000,1400,500\nDr. Arjun Menon,MRI-01,MRI Brain,4800,950,400';
     }
@@ -6730,12 +6735,21 @@ function CSVBulkUploadModal({
     const blob = new Blob([csv], { type: 'text/csv' });
     const a = document.createElement('a');
     a.href = URL.createObjectURL(blob);
-    a.download = isPartnerLabTestType ? 'sample_partner_lab_tests.csv' : isTestType ? 'sample_test_prices_instructions.csv' : 'sample_doctor_specific_prices.csv';
+    a.download = isPartnerLabTestType ? 'sample_partner_lab_tests.csv' : isTestType ? 'sample_test_prices.csv' : 'sample_doctor_specific_prices.csv';
     a.click();
   };
 
-  // RFC-4180 compliant CSV row parser — handles quoted fields with embedded commas/newlines
-  const parseCSVLine = (line: string): string[] => {
+  const parseNumeric = (val: any, fallback = 0): number => {
+    if (val === undefined || val === null) return fallback;
+    if (typeof val === 'number') return isNaN(val) ? fallback : val;
+    const s = String(val).trim().replace(/₹|\$|Rs\.?|,|\s/gi, '');
+    if (s === '' || s === '-') return fallback;
+    const n = Number(s);
+    return isNaN(n) ? fallback : n;
+  };
+
+  // Robust delimited row parser supporting commas, tabs (Excel copy-paste), and semicolons
+  const parseDelimitedLine = (line: string, delimiter = ','): string[] => {
     const result: string[] = [];
     let current = '';
     let inQuotes = false;
@@ -6744,7 +6758,7 @@ function CSVBulkUploadModal({
       if (ch === '"') {
         if (inQuotes && line[i + 1] === '"') { current += '"'; i++; }
         else { inQuotes = !inQuotes; }
-      } else if (ch === ',' && !inQuotes) {
+      } else if (ch === delimiter && !inQuotes) {
         result.push(current.trim()); current = '';
       } else {
         current += ch;
@@ -6757,14 +6771,23 @@ function CSVBulkUploadModal({
   const parseAndValidate = (csvText: string) => {
     setRawText(csvText);
     const cleanText = csvText.replace(/^\uFEFF/, '').trim();
-    const lines = cleanText.split(/\r?\n/).filter(Boolean);
-    if (lines.length < 2) {
-      setValidationErrors(['CSV file must contain a header row and at least 1 data row.']);
+    const rawLines = cleanText.split(/\r?\n/).filter(Boolean);
+    if (rawLines.length < 2) {
+      setValidationErrors(['CSV/Excel data must contain a header row and at least 1 data row.']);
       setRows([]);
       return;
     }
 
-    const headers = parseCSVLine(lines[0]);
+    // Auto-detect delimiter: tabs (from Excel copy-paste), commas, or semicolons
+    const headerLine = rawLines[0];
+    const tabCount = (headerLine.match(/\t/g) || []).length;
+    const commaCount = (headerLine.match(/,/g) || []).length;
+    const semicolonCount = (headerLine.match(/;/g) || []).length;
+    let delimiter = ',';
+    if (tabCount > commaCount && tabCount > semicolonCount) delimiter = '\t';
+    else if (semicolonCount > commaCount) delimiter = ';';
+
+    const headers = parseDelimitedLine(rawLines[0], delimiter).map((h) => h.replace(/^["'\s]+|["'\s]+$/g, '').trim());
     const parsedRows: any[] = [];
     const errors: string[] = [];
 
@@ -6781,27 +6804,37 @@ function CSVBulkUploadModal({
       return '';
     };
 
-    for (let i = 1; i < lines.length; i++) {
-      const cols = parseCSVLine(lines[i]);
+    for (let i = 1; i < rawLines.length; i++) {
+      let cols = parseDelimitedLine(rawLines[i], delimiter);
+
+      // If commas inside unquoted parentheses caused extra columns, rejoin them
+      if (cols.length > headers.length && delimiter === ',') {
+        const rejoined: string[] = [];
+        for (let c = 0; c < cols.length; c++) {
+          let col = cols[c];
+          while (c + 1 < cols.length && col.includes('(') && !col.includes(')')) {
+            c++;
+            col = `${col}, ${cols[c]}`;
+          }
+          rejoined.push(col);
+        }
+        cols = rejoined;
+      }
+
       const rowObj: Record<string, any> = {};
       headers.forEach((h, idx) => {
-        rowObj[h] = cols[idx] !== undefined ? cols[idx] : '';
+        rowObj[h] = cols[idx] !== undefined ? cols[idx].replace(/^["']|["']$/g, '').trim() : '';
       });
 
-      if (isPartnerLabTestType) {
-        const name = String(getField(rowObj, 'Test Name', 'name', 'testName', 'test_name') || '').trim();
-        const price = Number(getField(rowObj, 'Price', 'price', 'MRP', 'rate', 'Normal Price'));
+      if (isPartnerLabTestType || isTestType) {
+        const name = String(getField(rowObj, 'Test Name', 'name', 'testName', 'test_name', 'investigation') || '').trim();
+        const price = parseNumeric(getField(rowObj, 'Price', 'Normal Price', 'price', 'MRP', 'rate', 'normalPrice'));
         if (!name) errors.push(`Row ${i}: Missing Test Name.`);
-        if (isNaN(price) || price <= 0) errors.push(`Row ${i}: Invalid Price.`);
-      } else if (isTestType) {
-        const name = String(getField(rowObj, 'Test Name', 'name', 'testName', 'test_name') || '').trim();
-        const price = Number(getField(rowObj, 'Normal Price', 'Price', 'price', 'MRP', 'rate', 'normalPrice'));
-        if (!name) errors.push(`Row ${i}: Missing Test Name.`);
-        if (isNaN(price) || price <= 0) errors.push(`Row ${i}: Invalid Normal Price.`);
+        if (isNaN(price) || price <= 0) errors.push(`Row ${i}: Invalid Price '${getField(rowObj, 'Price', 'Normal Price') || ''}' (must be a positive number).`);
       } else {
         const doc = String(getField(rowObj, 'Doctor Name', 'doctorId', 'doctorName', 'doctor') || '').trim();
         const test = String(getField(rowObj, 'Test Name', 'Test Code', 'testId', 'testName', 'testCode') || '').trim();
-        const customP = Number(getField(rowObj, 'Doctor Price', 'Doctor-specific Price', 'customPrice', 'price'));
+        const customP = parseNumeric(getField(rowObj, 'Doctor Price', 'Doctor-specific Price', 'customPrice', 'price'));
         if (!doc) errors.push(`Row ${i}: Missing Doctor Name or ID.`);
         if (!test) errors.push(`Row ${i}: Missing Test Code or Name.`);
         if (isNaN(customP) || customP < 0) errors.push(`Row ${i}: Invalid Doctor-specific Price.`);

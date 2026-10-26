@@ -1046,19 +1046,29 @@ router.post("/tests/bulk-upload", async (req, res) => {
         return "";
       };
 
+      const parseNum = (val: any, fallback = 0): number => {
+        if (val === undefined || val === null) return fallback;
+        if (typeof val === "number") return isNaN(val) ? fallback : val;
+        const s = String(val).trim().replace(/₹|\$|Rs\.?|,|\s/gi, "");
+        if (s === "" || s === "-") return fallback;
+        const n = Number(s);
+        return isNaN(n) ? fallback : n;
+      };
+
       const name = String(getVal("name", "Test Name", "testName", "test_name", "investigation")).trim();
       const testCode = String(getVal("testCode", "Test Code", "test_code", "code")).trim();
-      const priceNum = Number(getVal("price", "normalPrice", "Normal Price", "MRP", "Price", "rate"));
-      const partnerShareNum = Number(getVal("partnerShare", "Partner Share", "partner_share") || 0);
-      const agentIncentiveNum = Number(getVal("agentIncentive", "Agent Incentive", "agent_incentive") || 0);
+      const priceNum = parseNum(getVal("price", "normalPrice", "Normal Price", "MRP", "Price", "rate"));
+      const b2bCostNum = parseNum(getVal("b2bCost", "B2B Cost", "b2b_cost", "b2b", "Lab Cost", "Cost"));
+      const partnerShareNum = parseNum(getVal("partnerShare", "Partner share", "Partner Share", "partner_share", "share"));
+      const agentIncentiveNum = parseNum(getVal("agentIncentive", "Agent Incentive", "agent_incentive", "incentive"));
       const instructionsText = String(getVal("instructions", "Instructions", "Patient Preparation", "preparation")).trim();
-      const sampleTypeText = String(getVal("sampleType", "Sample Type", "sample_type")).trim();
-      const turnaroundText = String(getVal("turnaround", "TAT", "Turnaround", "tat")).trim();
-      const fastingText = String(getVal("fasting", "Fasting")).trim();
-      const deptText = String(getVal("department", "Category", "Department", "category", "dept")).trim();
+      const sampleTypeText = String(getVal("sampleType", "Sample Type", "sample_type")).trim() || "Blood";
+      const turnaroundText = String(getVal("turnaround", "TURNAROUND", "TAT", "Turnaround", "tat")).trim() || "24 hours";
+      const fastingText = String(getVal("fasting", "Fasting", "Fasting.1")).trim() || "Not Required";
+      const deptText = String(getVal("department", "Category", "Department", "category", "dept")).trim() || "Pathology";
 
       if (!name) throw new Error("Test Name is required");
-      if (isNaN(priceNum) || priceNum <= 0) throw new Error("Valid positive price is required");
+      if (isNaN(priceNum) || priceNum <= 0) throw new Error(`Valid positive price is required (got '${getVal("price", "Price", "Normal Price")}')`);
 
       const existingIndex = existingTests.findIndex((t) =>
         (testCode && String(t.testCode).toLowerCase() === testCode.toLowerCase()) ||
@@ -1069,10 +1079,13 @@ router.post("/tests/bulk-upload", async (req, res) => {
         const existing = existingTests[existingIndex];
         const updatedTest = {
           ...existing,
+          testCode: testCode || existing.testCode,
+          name: name || existing.name,
           price: priceNum,
-          partnerShare: isNaN(partnerShareNum) ? existing.partnerShare : partnerShareNum,
-          agentIncentive: isNaN(agentIncentiveNum) ? existing.agentIncentive : agentIncentiveNum,
-          instructions: instructionsText || existing.instructions,
+          b2bCost: b2bCostNum !== 0 ? b2bCostNum : (existing.b2bCost ?? 0),
+          partnerShare: partnerShareNum,
+          agentIncentive: agentIncentiveNum,
+          instructions: instructionsText || existing.instructions || (fastingText ? `Fasting: ${fastingText}` : "No special preparation required."),
           sampleType: sampleTypeText || existing.sampleType,
           turnaround: turnaroundText || existing.turnaround,
           fasting: fastingText || existing.fasting,
@@ -1087,16 +1100,17 @@ router.post("/tests/bulk-upload", async (req, res) => {
           testCode: testCode || `TEST-${Math.floor(100 + Math.random() * 900)}`,
           name,
           shortName: row.shortName || name.slice(0, 8),
-          department: deptText || "General",
+          department: deptText,
           lab: row.lab || "Central Lab",
-          sampleType: sampleTypeText || "Blood",
-          turnaround: turnaroundText || "24 hours",
-          fasting: fastingText || "Not Required",
+          sampleType: sampleTypeText,
+          turnaround: turnaroundText,
+          fasting: fastingText,
           duration: 30,
           price: priceNum,
-          partnerShare: isNaN(partnerShareNum) ? 0 : partnerShareNum,
-          agentIncentive: isNaN(agentIncentiveNum) ? 0 : agentIncentiveNum,
-          instructions: instructionsText || "No special preparation required.",
+          b2bCost: b2bCostNum,
+          partnerShare: partnerShareNum,
+          agentIncentive: agentIncentiveNum,
+          instructions: instructionsText || (fastingText ? `Fasting: ${fastingText}` : "No special preparation required."),
           active: true,
         };
         newTest.parameters = getResolvedParameters(newTest);
@@ -1443,20 +1457,42 @@ router.post("/partner-labs/:id/tests/bulk-upload", async (req, res) => {
     const rowNum = i + 1;
 
     try {
-      const name = String(row.name || row["Test Name"] || "").trim();
-      const testCode = String(row.testCode || row["Test Code"] || "").trim();
-      const priceNum = Number(row.price || row["Price"] || row["MRP"]);
-      const b2bCostNum = Number(row.b2bCost || row["B2B Cost"] || row["Lab Cost"] || 0);
-      const partnerShareNum = Number(row.partnerShare || row["Partner Share"] || 0);
-      const agentIncentiveNum = Number(row.agentIncentive || row["Agent Incentive"] || 0);
-      const category = String(row.category || row["Category"] || "").trim();
-      const turnaround = String(row.turnaround || row["Turnaround"] || row["TAT"] || "").trim();
-      const sampleType = String(row.sampleType || row["Sample Type"] || "").trim();
-      const fasting = String(row.fasting || row["Fasting"] || "").trim();
-      const instructionsText = String(row.instructions || row["Instructions"] || "").trim();
+      const getVal = (...keys: string[]) => {
+        for (const k of keys) {
+          if (row[k] !== undefined && row[k] !== null && String(row[k]).trim() !== "") return row[k];
+          const lower = k.toLowerCase().replace(/[^a-z0-9]/g, "");
+          for (const [rk, val] of Object.entries(row)) {
+            if (rk.toLowerCase().replace(/[^a-z0-9]/g, "") === lower && val !== undefined && val !== null && String(val).trim() !== "") {
+              return val;
+            }
+          }
+        }
+        return "";
+      };
+
+      const parseNum = (val: any, fallback = 0): number => {
+        if (val === undefined || val === null) return fallback;
+        if (typeof val === "number") return isNaN(val) ? fallback : val;
+        const s = String(val).trim().replace(/₹|\$|Rs\.?|,|\s/gi, "");
+        if (s === "" || s === "-") return fallback;
+        const n = Number(s);
+        return isNaN(n) ? fallback : n;
+      };
+
+      const name = String(getVal("name", "Test Name", "testName", "test_name", "investigation")).trim();
+      const testCode = String(getVal("testCode", "Test Code", "test_code", "code")).trim();
+      const priceNum = parseNum(getVal("price", "normalPrice", "Normal Price", "MRP", "Price", "rate"));
+      const b2bCostNum = parseNum(getVal("b2bCost", "B2B Cost", "b2b_cost", "b2b", "Lab Cost", "Cost"));
+      const partnerShareNum = parseNum(getVal("partnerShare", "Partner share", "Partner Share", "partner_share", "share"));
+      const agentIncentiveNum = parseNum(getVal("agentIncentive", "Agent Incentive", "agent_incentive", "incentive"));
+      const category = String(getVal("category", "Category", "Department", "department", "dept")).trim() || "Pathology";
+      const turnaround = String(getVal("turnaround", "TURNAROUND", "TAT", "Turnaround", "tat")).trim() || "24 hours";
+      const sampleType = String(getVal("sampleType", "Sample Type", "sample_type")).trim() || "Blood";
+      const fasting = String(getVal("fasting", "Fasting", "Fasting.1")).trim() || "Not Required";
+      const instructionsText = String(getVal("instructions", "Instructions", "Patient Preparation", "preparation")).trim();
 
       if (!name) throw new Error("Test Name is required");
-      if (isNaN(priceNum) || priceNum <= 0) throw new Error("Valid positive price is required");
+      if (isNaN(priceNum) || priceNum <= 0) throw new Error(`Valid positive price is required (got '${getVal("price", "Price", "Normal Price")}')`);
 
       const existingIndex = existingTests.findIndex((t: any) =>
         (testCode && String(t.testCode).toLowerCase() === testCode.toLowerCase()) ||
