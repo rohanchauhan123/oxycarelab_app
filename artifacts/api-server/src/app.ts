@@ -1,4 +1,4 @@
-import express, { type Express } from "express";
+import express, { type Express, type NextFunction, type Request, type Response } from "express";
 import cors from "cors";
 import path from "node:path";
 import fs from "node:fs";
@@ -28,10 +28,19 @@ app.use(
   }),
 );
 app.use(cors());
-app.use(express.json());
-app.use(express.urlencoded({ extended: true }));
+app.use(express.json({ limit: "50mb" }));
+app.use(express.urlencoded({ extended: true, limit: "50mb" }));
 
 app.use("/api", router);
+
+// Return API errors (e.g. oversized request bodies) as JSON instead of Express's HTML error page
+app.use("/api", (err: any, _req: Request, res: Response, next: NextFunction) => {
+  if (res.headersSent) return next(err);
+  logger.error({ err }, "API request failed");
+  const status = err.status || err.statusCode || 500;
+  const message = err.type === "entity.too.large" ? "Upload is too large. Please split the file and try again." : err.message || "Internal server error";
+  res.status(status).json({ error: message });
+});
 
 // Serve static frontend assets in production / Dokploy standalone deployment
 const possibleStaticDirs = [

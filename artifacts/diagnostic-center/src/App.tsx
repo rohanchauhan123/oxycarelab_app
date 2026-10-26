@@ -6868,13 +6868,29 @@ function CSVBulkUploadModal({
       const endpoint = isPartnerLabTestType
         ? `/api/partner-labs/${partnerLabId}/tests/bulk-upload`
         : isTestType ? '/api/tests/bulk-upload' : '/api/doctor-prices/bulk-upload';
-      const res = await fetch(endpoint, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ rows }),
-      });
-      const summary = await res.json();
-      if (!res.ok) throw new Error(summary.error || 'Bulk import failed');
+
+      // Send in batches so large catalogues never exceed the server/proxy request size limit
+      const BATCH_SIZE = 200;
+      const summary = { totalRows: rows.length, imported: 0, updated: 0, failed: 0, errors: [] as { row: number; error: string }[] };
+      for (let start = 0; start < rows.length; start += BATCH_SIZE) {
+        const res = await fetch(endpoint, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ rows: rows.slice(start, start + BATCH_SIZE) }),
+        });
+        const text = await res.text();
+        let data: any = {};
+        try { data = text ? JSON.parse(text) : {}; } catch { /* non-JSON error page */ }
+        if (!res.ok) {
+          const saved = summary.imported + summary.updated;
+          const reason = data.error || `Server error ${res.status}`;
+          throw new Error(saved > 0 ? `${reason} (stopped at row ${start + 1}; ${saved} rows were already saved)` : reason);
+        }
+        summary.imported += data.imported || 0;
+        summary.updated += data.updated || 0;
+        summary.failed += data.failed || 0;
+        for (const e of data.errors || []) summary.errors.push({ row: e.row + start, error: e.error });
+      }
 
       setResultSummary(summary);
       toast.success(`Import complete! ${summary.imported} imported, ${summary.updated} updated.`);
