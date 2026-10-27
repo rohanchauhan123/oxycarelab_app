@@ -1452,6 +1452,14 @@ function AppointmentRow({
           <div className="mono mt-0.5 text-[10px] text-muted-foreground">{appointment.uhid} · {appointment.mobile}</div>
         </div>
 
+        <div className="w-[105px] shrink-0 text-xs" title="Appointment date & time">
+          <div className="flex items-center gap-1 font-semibold text-foreground">
+            <CalendarDays size={12} className="text-primary shrink-0" />
+            {formatDay(appointment.collectionDate || appointment.date)}
+          </div>
+          <div className="mono mt-0.5 text-[10px] text-muted-foreground truncate">{appointment.timeSlot || appointment.time || '—'}</div>
+        </div>
+
         <div className="w-[150px] shrink-0">
           <div className="text-xs font-medium truncate">{appointment.testName}</div>
           <div className="mt-0.5 text-[10px] text-muted-foreground truncate" title={appointment.partnerLabName || appointment.lab}>
@@ -1669,7 +1677,16 @@ function EditAppointmentModal({
     const q = testSearch.toLowerCase().trim();
     if (!q) return [];
     const chosenIds = new Set(selectedTests.map((t) => t.testId));
-    return allAvailableTests
+    // Only offer tests conducted by the selected partner lab
+    const activeLab = partnerLabs.find((l) => l.id === selectedLabId);
+    const source: any[] = activeLab
+      ? (activeLab.tests || []).filter((lt) => lt.active !== false).map((lt) => ({
+          ...lt,
+          department: lt.category || lt.department || 'Pathology',
+          parameters: lt.parameters || [],
+        }))
+      : allAvailableTests;
+    return source
       .filter((t) => !chosenIds.has(t.id))
       .filter((t) =>
         t.name.toLowerCase().includes(q) ||
@@ -1677,12 +1694,10 @@ function EditAppointmentModal({
         (t.department && t.department.toLowerCase().includes(q))
       )
       .slice(0, 10);
-  }, [allAvailableTests, testSearch, selectedTests]);
+  }, [allAvailableTests, partnerLabs, selectedLabId, testSearch, selectedTests]);
 
   const addTestToCart = (t: any) => {
-    const defaultParams = Array.isArray(t.parameters) && t.parameters.length > 0
-      ? t.parameters
-      : [{ name: `${t.name} Core Marker` }, { name: 'Differential Index' }];
+    const defaultParams = Array.isArray(t.parameters) ? t.parameters : [];
 
     let price = Number(t.price || 0);
     let partnerShare = Number(t.partnerShare || 0);
@@ -3912,165 +3927,89 @@ function NewAppointment({ currentUser }: { currentUser: UserAccount }) {
   useEffect(() => {
     fetch('/api/patients').then((r) => r.json()).then(setPatients);
     fetch('/api/partner-labs').then((r) => r.json()).then((labs: PartnerLab[]) => {
-      setPartnerLabs(labs);
-    });
-    fetch('/api/tests').then((r) => r.json()).then((data: Test[]) => {
-      setTests(data);
-      if (data.length > 0) {
-        const first = data[0] as any;
-        setSelectedTests([{
-          testId: first.id,
-          testCode: first.testCode || 'TEST-01',
-          testName: first.name,
-          price: Number(first.price),
-          partnerShare: Number(first.partnerShare || 0),
-          agentIncentive: Number(first.agentIncentive || 0),
-          instructions: first.instructions || 'Standard preparation',
-          parameters: Array.isArray(first.parameters) ? first.parameters : [],
-          quantity: 1,
-          lineTotal: Number(first.price),
-        }]);
-      }
+      setPartnerLabs(labs.filter((l) => l.active !== false));
     });
     fetch('/api/doctors').then((r) => r.json()).then(setDoctors);
   }, []);
 
-  // Auto-select initial partner lab conducting the selected test
-  useEffect(() => {
-    if (!selectedLabId && partnerLabs.length > 0 && selectedTests.length > 0) {
-      const firstTest = selectedTests[0];
-      const match = partnerLabs.find((l) =>
-        (l.tests || []).some(
-          (lt) =>
-            lt.id === firstTest.testId ||
-            (lt.testCode && lt.testCode.toLowerCase() === (firstTest.testCode || '').toLowerCase()) ||
-            lt.name.toLowerCase() === firstTest.testName.toLowerCase()
-        )
-      );
-      if (match) {
-        setSelectedLabId(match.id);
-      } else {
-        setSelectedLabId(partnerLabs[0].id);
-      }
-    }
-  }, [partnerLabs, selectedTests, selectedLabId]);
-
   const selectedLab = useMemo(() => partnerLabs.find((l) => l.id === selectedLabId), [partnerLabs, selectedLabId]);
 
-  // All tests available across center master catalogue and partner labs
-  const allAvailableTests = useMemo(() => {
-    const list: any[] = [...tests];
-    partnerLabs.forEach((lab) => {
-      (lab.tests || []).forEach((lt) => {
-        const alreadyExists = list.some(
-          (t) =>
-            t.id === lt.id ||
-            (t.testCode && t.testCode.toLowerCase() === (lt.testCode || '').toLowerCase()) ||
-            t.name.toLowerCase() === lt.name.toLowerCase()
-        );
-        if (!alreadyExists) {
-          list.push({
-            id: lt.id,
-            name: lt.name,
-            testCode: lt.testCode,
-            department: lt.category || lt.department || 'Pathology',
-            price: lt.price,
-            partnerShare: lt.partnerShare || 0,
-            agentIncentive: lt.agentIncentive || 0,
-            instructions: lt.instructions || 'Standard preparation',
-            parameters: lt.parameters || [],
-          });
-        }
-      });
-    });
-    return list;
-  }, [tests, partnerLabs]);
+  // Tests conducted by the selected partner lab (lab is chosen first)
+  const labTests = useMemo(() => {
+    if (!selectedLab) return [];
+    return (selectedLab.tests || [])
+      .filter((lt) => lt.active !== false)
+      .map((lt) => ({
+        id: lt.id,
+        name: lt.name,
+        testCode: lt.testCode,
+        department: lt.category || lt.department || 'Pathology',
+        price: lt.price,
+        partnerShare: lt.partnerShare || 0,
+        agentIncentive: lt.agentIncentive || 0,
+        instructions: lt.instructions || 'Standard preparation',
+        parameters: lt.parameters || [],
+      }));
+  }, [selectedLab]);
 
-  // Filtered available tests for search dropdown
+  // Filtered lab tests for search dropdown
   const filteredTests = useMemo(() => {
-    if (!testSearch) return allAvailableTests;
+    if (!testSearch) return labTests;
     const q = testSearch.toLowerCase();
-    return allAvailableTests.filter((t: any) =>
-      [t.name, t.shortName, t.testCode, t.department].some((v) => String(v || '').toLowerCase().includes(q))
+    return labTests.filter((t: any) =>
+      [t.name, t.testCode, t.department].some((v) => String(v || '').toLowerCase().includes(q))
     );
-  }, [allAvailableTests, testSearch]);
+  }, [labTests, testSearch]);
 
-  // Eligible partner labs filtered by tests selected in cart
+  const [testPickerOpen, setTestPickerOpen] = useState(false);
+
+  // Partner labs matching the lab search box
   const eligibleLabs = useMemo(() => {
-    if (selectedTests.length === 0) return [];
     const q = labSearch.toLowerCase().trim();
-
     return partnerLabs
-      .map((lab) => {
-        const labTests = lab.tests || [];
-        let matchCount = 0;
-
-        for (const st of selectedTests) {
-          const stName = st.testName.toLowerCase().trim();
-          const stCode = (st.testCode || '').toLowerCase().trim();
-          const matches = labTests.some((lt) => {
-            const ltName = lt.name.toLowerCase().trim();
-            const ltCode = (lt.testCode || '').toLowerCase().trim();
-            return (
-              lt.id === st.testId ||
-              (ltCode && ltCode === stCode) ||
-              ltName === stName ||
-              ltName.includes(stName) ||
-              stName.includes(ltName)
-            );
-          });
-          if (matches) matchCount++;
-        }
-
-        const conductsAll = matchCount === selectedTests.length;
-        const conductsSome = matchCount > 0;
-
-        return {
-          lab,
-          matchCount,
-          conductsAll,
-          conductsSome,
-        };
-      })
-      .filter(({ lab }) => {
-        if (q) {
-          return [lab.name, lab.address, lab.city, lab.contactPerson].some((v) =>
-            String(v || '').toLowerCase().includes(q)
-          );
-        }
-        return true;
-      })
-      .sort((a, b) => {
-        if (a.conductsAll && !b.conductsAll) return -1;
-        if (!a.conductsAll && b.conductsAll) return 1;
-        return b.matchCount - a.matchCount;
-      });
-  }, [partnerLabs, selectedTests, labSearch]);
+      .filter((lab) => !q || [lab.name, lab.address, lab.city, lab.contactPerson].some((v) =>
+        String(v || '').toLowerCase().includes(q)
+      ))
+      .map((lab) => ({ lab, testCount: (lab.tests || []).filter((lt) => lt.active !== false).length }));
+  }, [partnerLabs, labSearch]);
 
   const handleSelectLab = (lab: PartnerLab) => {
     setSelectedLabId(lab.id);
     setLabSearch('');
     setIsChangingLab(false);
-    // Sync partnerShare if the selected lab defines specific custom rates
-    if (Array.isArray(lab.tests) && lab.tests.length > 0) {
-      setSelectedTests((prev) =>
-        prev.map((item) => {
-          const matchedTest = lab.tests.find(
-            (lt) =>
-              lt.id === item.testId ||
-              (lt.testCode && lt.testCode.toLowerCase() === (item.testCode || '').toLowerCase()) ||
-              lt.name.toLowerCase() === item.testName.toLowerCase()
-          );
-          if (matchedTest) {
-            return {
-              ...item,
-              partnerShare: matchedTest.partnerShare !== undefined ? Number(matchedTest.partnerShare) : item.partnerShare,
-              agentIncentive: matchedTest.agentIncentive !== undefined ? Number(matchedTest.agentIncentive) : item.agentIncentive,
-            };
-          }
-          return item;
-        })
-      );
+    setTestSearch('');
+    // Tests already in the cart are re-priced from the new lab; tests it doesn't conduct are removed
+    if (selectedTests.length === 0) return;
+    const findInLab = (item: TestItemSnapshot) => (lab.tests || []).find(
+      (lt) =>
+        lt.active !== false && (
+          lt.id === item.testId ||
+          (lt.testCode && lt.testCode.toLowerCase() === (item.testCode || '').toLowerCase()) ||
+          lt.name.toLowerCase() === item.testName.toLowerCase()
+        )
+    );
+    const removed = selectedTests.filter((item) => !findInLab(item));
+    setSelectedTests(
+      selectedTests.flatMap((item) => {
+        const lt = findInLab(item);
+        if (!lt) return [];
+        const price = Number(lt.price || 0);
+        return [{
+          ...item,
+          testId: lt.id,
+          testCode: lt.testCode || item.testCode,
+          testName: lt.name,
+          price,
+          partnerShare: Number(lt.partnerShare || 0),
+          agentIncentive: Number(lt.agentIncentive || 0),
+          instructions: lt.instructions || item.instructions,
+          parameters: lt.parameters || [],
+          lineTotal: price * item.quantity,
+        }];
+      })
+    );
+    if (removed.length > 0) {
+      toast.info(`Removed ${removed.map((t) => t.testName).join(', ')} — not offered by ${lab.name}`);
     }
   };
 
@@ -4457,68 +4396,186 @@ function NewAppointment({ currentUser }: { currentUser: UserAccount }) {
             </div>
           )}
 
+          <div className="border-t border-border pt-5">
+            {/* Step 1: Mandatory Partner Lab Selection — tests below come from this lab */}
+            <div className="rounded-2xl border border-border bg-card p-4 space-y-3 shadow-xs">
+              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-1.5">
+                <div className="flex items-center gap-2">
+                  <div className="grid size-8 place-items-center rounded-lg bg-primary/10 text-primary shrink-0">
+                    <Building2 size={16} />
+                  </div>
+                  <div>
+                    <div className="flex items-center gap-2">
+                      <span className="font-bold text-xs uppercase tracking-wider text-foreground">Assigned Partner Laboratory</span>
+                      <span className="mono rounded bg-destructive/10 px-1.5 py-0.2 text-[9px] font-bold text-destructive">MANDATORY *</span>
+                    </div>
+                    <p className="text-[11px] text-muted-foreground">Step 1: Select the partner laboratory first — only tests conducted by this lab can be booked.</p>
+                  </div>
+                </div>
+                {selectedLab && (
+                  <span className="mono flex items-center gap-1 rounded-lg bg-[#e5f5f1] px-2.5 py-1 text-xs font-bold text-[#167366] border border-[#bce4db] w-fit shrink-0">
+                    <CheckCircle2 size={13} /> {selectedLab.name}
+                  </span>
+                )}
+              </div>
+
+              {selectedLab && !isChangingLab ? (
+                <div className="flex items-center justify-between rounded-xl border border-primary/30 bg-primary/5 p-3 shadow-xs">
+                  <div className="flex items-center gap-3 min-w-0">
+                    <div className="grid size-9 place-items-center rounded-xl bg-primary text-primary-foreground shrink-0 shadow-xs">
+                      <Building2 size={18} />
+                    </div>
+                    <div className="min-w-0">
+                      <div className="flex items-center gap-2 flex-wrap">
+                        <span className="font-bold text-sm text-foreground">{selectedLab.name}</span>
+                        <span className="mono rounded bg-[#e5f5f1] text-[#167366] px-2 py-0.5 text-[10px] font-bold border border-[#bce4db]">
+                          {labTests.length} Tests Available
+                        </span>
+                      </div>
+                      <div className="text-xs text-muted-foreground flex items-center gap-2 mt-0.5 truncate">
+                        <span>📍 {selectedLab.address}</span>
+                        {selectedLab.city && <span>· {selectedLab.city}</span>}
+                        {selectedLab.phone && <span>· 📞 {selectedLab.phone}</span>}
+                      </div>
+                    </div>
+                  </div>
+                  <Button
+                    type="button"
+                    variant="secondary"
+                    className="h-8 text-xs font-semibold gap-1 shrink-0 ml-3 bg-card hover:bg-muted"
+                    onClick={() => { setIsChangingLab(true); setLabSearch(''); }}
+                  >
+                    <Edit3 size={13} /> Change Lab
+                  </Button>
+                </div>
+              ) : (
+                <div className="relative">
+                  <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground" size={16} />
+                  <Input
+                    value={labSearch}
+                    onChange={(e) => setLabSearch(e.target.value)}
+                    placeholder="Search partner labs by name, city, address..."
+                    className="pl-9 bg-card"
+                    autoFocus={isChangingLab}
+                  />
+                  {/* Autocomplete Dropdown */}
+                  <div className="mt-1.5 max-h-56 overflow-y-auto rounded-xl border border-border bg-card shadow-2xl p-1.5 space-y-1">
+                    {eligibleLabs.length === 0 ? (
+                      <div className="p-4 text-center text-xs text-muted-foreground">
+                        No partner labs found matching "{labSearch}".
+                      </div>
+                    ) : (
+                      eligibleLabs.map(({ lab, testCount }) => (
+                        <button
+                          key={lab.id}
+                          type="button"
+                          onClick={() => handleSelectLab(lab)}
+                          className={cx(
+                            'flex w-full items-center justify-between rounded-lg p-2.5 text-left text-xs transition-colors hover:bg-muted/70 cursor-pointer',
+                            selectedLabId === lab.id ? 'bg-primary/10 border border-primary/30' : ''
+                          )}
+                        >
+                          <div>
+                            <div className="font-bold text-foreground flex items-center gap-2">
+                              {lab.name}
+                              {lab.city && <span className="mono text-[10px] rounded bg-muted px-1.5 py-0.2 text-muted-foreground">{lab.city}</span>}
+                            </div>
+                            <div className="text-[11px] text-muted-foreground flex items-center gap-1 mt-0.5">
+                              <MapPin size={11} className="shrink-0" /> {lab.address}
+                            </div>
+                          </div>
+                          <div className="text-right shrink-0">
+                            <span className={cx(
+                              'mono rounded px-2 py-0.5 text-[10px] font-bold border',
+                              testCount > 0 ? 'bg-[#e5f5f1] text-[#167366] border-[#bce4db]' : 'bg-muted text-muted-foreground border-border'
+                            )}>
+                              {testCount > 0 ? `${testCount} Tests` : 'No Tests Added'}
+                            </span>
+                          </div>
+                        </button>
+                      ))
+                    )}
+                  </div>
+                  {isChangingLab && selectedLab && (
+                    <div className="mt-1.5 flex justify-end">
+                      <button
+                        type="button"
+                        onClick={() => setIsChangingLab(false)}
+                        className="text-xs text-muted-foreground hover:text-foreground font-semibold hover:underline"
+                      >
+                        Keep current lab ({selectedLab.name})
+                      </button>
+                    </div>
+                  )}
+                </div>
+              )}
+            </div>
+          </div>
+
           {/* Multiple Test Selection & Cart Table */}
           <div className="space-y-4 border-t border-border pt-5">
             <div className="flex items-center justify-between">
               <div>
-                <h3 className="font-bold text-base text-foreground">Select Multiple Tests & Packages</h3>
+                <h3 className="font-bold text-base text-foreground">Step 2: Select Tests</h3>
                 <p className="text-xs text-muted-foreground">
-                  {selectedLab ? `Available test catalogue conducted by ${selectedLab.name}` : 'Search and add multiple diagnostic investigations to a single booking.'}
+                  {selectedLab ? `Showing only tests conducted by ${selectedLab.name}` : 'Select a partner lab above to see its tests.'}
                 </p>
               </div>
               <span className="mono rounded bg-primary/10 px-2.5 py-1 text-xs font-bold text-primary">{selectedTests.length} Tests Selected</span>
             </div>
 
-            {/* Test Search & Picker */}
+            {/* Test Search & Picker (lab's own catalogue only) */}
             <div className="relative">
               <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground" size={16} />
               <Input
                 value={testSearch}
                 onChange={(e) => setTestSearch(e.target.value)}
-                placeholder={selectedLab ? `Search tests in ${selectedLab.name} (e.g. CBC, Lipid, Thyroid)...` : "Search test by name, test code (e.g. CBC-01), department..."}
+                onFocus={() => setTestPickerOpen(true)}
+                onBlur={() => setTestPickerOpen(false)}
+                disabled={!selectedLab}
+                placeholder={selectedLab ? `Search ${labTests.length} tests in ${selectedLab.name} (e.g. CBC, Lipid, Thyroid)...` : 'Select a partner lab first'}
                 className="pl-9"
               />
-              {testSearch && (
-                <div className="absolute left-0 right-0 top-full z-20 mt-1 max-h-48 overflow-y-auto rounded-xl border border-border bg-card shadow-xl p-1">
+              {selectedLab && (testSearch || testPickerOpen) && (
+                <div
+                  className="absolute left-0 right-0 top-full z-20 mt-1 max-h-64 overflow-y-auto rounded-xl border border-border bg-card shadow-xl p-1"
+                  onMouseDown={(e) => e.preventDefault()}
+                >
+                  {filteredTests.length === 0 && (
+                    <div className="p-4 text-center text-xs text-muted-foreground">
+                      {labTests.length === 0
+                        ? `${selectedLab.name} has no tests yet. Add tests in Partner Labs → Manage Tests.`
+                        : `No test in ${selectedLab.name} matches "${testSearch}".`}
+                    </div>
+                  )}
                   {filteredTests.map((t: any) => {
-                    const paramList = Array.isArray(t.parameters) && t.parameters.length > 0
-                      ? t.parameters
-                      : (String(t.name).toLowerCase().includes('cbc') || String(t.testCode).toLowerCase().includes('cbc')
-                          ? [
-                              { name: 'Hemoglobin (Hb)' }, { name: 'Total Leukocyte Count (TLC)' },
-                              { name: 'Platelet Count' }, { name: 'RBC Count' },
-                              { name: 'Packed Cell Volume' }, { name: 'MCV' },
-                              { name: 'MCH' }, { name: 'Neutrophils %' }
-                            ]
-                          : String(t.name).toLowerCase().includes('thyroid')
-                          ? [{ name: 'Total T3' }, { name: 'Total T4' }, { name: 'TSH' }]
-                          : String(t.name).toLowerCase().includes('mri')
-                          ? [{ name: 'Brain Parenchyma' }, { name: 'Ventricular System' }, { name: 'DWI' }]
-                          : String(t.name).toLowerCase().includes('pet')
-                          ? [{ name: 'Metabolic Mapping' }, { name: 'FDG Uptake' }]
-                          : [{ name: `${t.name} Core Value` }, { name: 'Quantitative Marker' }, { name: 'Differential Index' }]);
+                    const paramList: TestParameter[] = Array.isArray(t.parameters) ? t.parameters : [];
 
                     return (
                       <button
                         key={t.id}
                         type="button"
-                        onClick={() => { addTestToCart({ ...t, parameters: paramList }); setTestSearch(''); }}
+                        onClick={() => { addTestToCart(t); setTestSearch(''); }}
                         className="flex w-full items-center justify-between rounded-lg px-3 py-2 text-xs text-left hover:bg-muted transition-colors"
                       >
                         <div className="flex-1 pr-3">
                           <div className="flex items-center gap-2 flex-wrap">
                             <span className="font-bold">{t.name}</span>
                             <span className="mono text-[10px] text-muted-foreground">({t.testCode || t.id})</span>
-                            <span className="mono rounded bg-primary/15 px-2 py-0.5 text-[10px] font-bold text-primary flex items-center gap-1">
-                              🔬 {paramList.length} Parameters Covered
-                            </span>
+                            {paramList.length > 0 && (
+                              <span className="mono rounded bg-primary/15 px-2 py-0.5 text-[10px] font-bold text-primary flex items-center gap-1">
+                                🔬 {paramList.length} Parameters
+                              </span>
+                            )}
                           </div>
                           <div className="text-[10px] text-muted-foreground mt-0.5">
                             {t.department} · Pre-prep: {t.instructions || 'No special preparation needed.'}
                           </div>
-                          <div className="text-[10px] text-primary/80 font-medium truncate max-w-[380px] mt-0.5">
-                            🔬 Included: {paramList.map((p: any) => p.name).join(', ')}
-                          </div>
+                          {paramList.length > 0 && (
+                            <div className="text-[10px] text-primary/80 font-medium truncate max-w-[380px] mt-0.5">
+                              🔬 Included: {paramList.map((p) => p.name).join(', ')}
+                            </div>
+                          )}
                         </div>
                         <div className="text-right shrink-0">
                           <div className="font-bold text-primary">{money(t.price)}</div>
@@ -4601,131 +4658,6 @@ function NewAppointment({ currentUser }: { currentUser: UserAccount }) {
                 No tests added yet. Search above to add tests to this booking.
               </div>
             )}
-
-            {/* Mandatory Partner Lab Selection (Filtered by tests chosen above) */}
-            <div className="rounded-2xl border border-border bg-card p-4 space-y-3 shadow-xs">
-              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-1.5">
-                <div className="flex items-center gap-2">
-                  <div className="grid size-8 place-items-center rounded-lg bg-primary/10 text-primary shrink-0">
-                    <Building2 size={16} />
-                  </div>
-                  <div>
-                    <div className="flex items-center gap-2">
-                      <span className="font-bold text-xs uppercase tracking-wider text-foreground">Assigned Partner Laboratory</span>
-                      <span className="mono rounded bg-destructive/10 px-1.5 py-0.2 text-[9px] font-bold text-destructive">MANDATORY *</span>
-                    </div>
-                    <p className="text-[11px] text-muted-foreground">Select the outsourced partner laboratory conducting these investigation(s).</p>
-                  </div>
-                </div>
-                {selectedLab && (
-                  <span className="mono flex items-center gap-1 rounded-lg bg-[#e5f5f1] px-2.5 py-1 text-xs font-bold text-[#167366] border border-[#bce4db] w-fit shrink-0">
-                    <CheckCircle2 size={13} /> {selectedLab.name}
-                  </span>
-                )}
-              </div>
-
-              {selectedTests.length === 0 ? (
-                <div className="rounded-xl border border-dashed border-border bg-muted/20 p-3.5 text-center text-xs text-muted-foreground">
-                  🔬 Please select diagnostic test(s) above first. Partner labs offering those tests will automatically appear for selection.
-                </div>
-              ) : selectedLab && !isChangingLab ? (
-                <div className="flex items-center justify-between rounded-xl border border-primary/30 bg-primary/5 p-3 shadow-xs">
-                  <div className="flex items-center gap-3 min-w-0">
-                    <div className="grid size-9 place-items-center rounded-xl bg-primary text-primary-foreground shrink-0 shadow-xs">
-                      <Building2 size={18} />
-                    </div>
-                    <div className="min-w-0">
-                      <div className="flex items-center gap-2 flex-wrap">
-                        <span className="font-bold text-sm text-foreground">{selectedLab.name}</span>
-                        <span className="mono rounded bg-[#e5f5f1] text-[#167366] px-2 py-0.5 text-[10px] font-bold border border-[#bce4db]">
-                          Conducts Selected Tests
-                        </span>
-                      </div>
-                      <div className="text-xs text-muted-foreground flex items-center gap-2 mt-0.5 truncate">
-                        <span>📍 {selectedLab.address}</span>
-                        {selectedLab.city && <span>· {selectedLab.city}</span>}
-                        {selectedLab.phone && <span>· 📞 {selectedLab.phone}</span>}
-                      </div>
-                    </div>
-                  </div>
-                  <Button
-                    type="button"
-                    variant="secondary"
-                    className="h-8 text-xs font-semibold gap-1 shrink-0 ml-3 bg-card hover:bg-muted"
-                    onClick={() => { setIsChangingLab(true); setLabSearch(''); }}
-                  >
-                    <Edit3 size={13} /> Change Lab
-                  </Button>
-                </div>
-              ) : (
-                <div className="relative">
-                  <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground" size={16} />
-                  <Input
-                    value={labSearch}
-                    onChange={(e) => setLabSearch(e.target.value)}
-                    placeholder={`Search partner labs offering ${selectedTests.map(t => t.testName).slice(0, 2).join(', ')}...`}
-                    className="pl-9 bg-card"
-                    autoFocus={isChangingLab}
-                  />
-                  {/* Autocomplete Dropdown */}
-                  <div className="mt-1.5 max-h-56 overflow-y-auto rounded-xl border border-border bg-card shadow-2xl p-1.5 space-y-1">
-                    {eligibleLabs.length === 0 ? (
-                      <div className="p-4 text-center text-xs text-muted-foreground">
-                        No partner labs found matching "{labSearch}".
-                      </div>
-                    ) : (
-                      eligibleLabs.map(({ lab, conductsAll, matchCount }) => (
-                        <button
-                          key={lab.id}
-                          type="button"
-                          onClick={() => handleSelectLab(lab)}
-                          className={cx(
-                            'flex w-full items-center justify-between rounded-lg p-2.5 text-left text-xs transition-colors hover:bg-muted/70 cursor-pointer',
-                            selectedLabId === lab.id ? 'bg-primary/10 border border-primary/30' : ''
-                          )}
-                        >
-                          <div>
-                            <div className="font-bold text-foreground flex items-center gap-2">
-                              {lab.name}
-                              {lab.city && <span className="mono text-[10px] rounded bg-muted px-1.5 py-0.2 text-muted-foreground">{lab.city}</span>}
-                            </div>
-                            <div className="text-[11px] text-muted-foreground flex items-center gap-1 mt-0.5">
-                              <MapPin size={11} className="shrink-0" /> {lab.address}
-                            </div>
-                          </div>
-                          <div className="text-right shrink-0">
-                            {conductsAll ? (
-                              <span className="mono rounded bg-[#e5f5f1] text-[#167366] border border-[#bce4db] px-2 py-0.5 text-[10px] font-bold">
-                                ✓ Offers All Tests
-                              </span>
-                            ) : matchCount > 0 ? (
-                              <span className="mono rounded bg-amber-100 text-amber-800 border border-amber-300 px-2 py-0.5 text-[10px] font-bold">
-                                Offers {matchCount}/{selectedTests.length} Tests
-                              </span>
-                            ) : (
-                              <span className="mono rounded bg-muted text-muted-foreground px-2 py-0.5 text-[10px]">
-                                Partner Lab
-                              </span>
-                            )}
-                          </div>
-                        </button>
-                      ))
-                    )}
-                  </div>
-                  {isChangingLab && selectedLab && (
-                    <div className="mt-1.5 flex justify-end">
-                      <button
-                        type="button"
-                        onClick={() => setIsChangingLab(false)}
-                        className="text-xs text-muted-foreground hover:text-foreground font-semibold hover:underline"
-                      >
-                        Keep current lab ({selectedLab.name})
-                      </button>
-                    </div>
-                  )}
-                </div>
-              )}
-            </div>
 
             {/* Financial Summary Card */}
             <div className="rounded-2xl border border-border bg-muted/30 p-4 space-y-4">
@@ -5629,6 +5561,7 @@ function PartnerLabs({ currentUser }: { currentUser: UserAccount }) {
   const [testSampleType, setTestSampleType] = useState('EDTA Whole Blood');
   const [testFasting, setTestFasting] = useState('Not Required');
   const [testInstructions, setTestInstructions] = useState('No special preparation required.');
+  const [testParameters, setTestParameters] = useState<TestParameter[]>([]);
 
   const isAdmin = currentUser.role === 'ADMIN' || currentUser.role === 'SUPER_ADMIN';
 
@@ -5750,22 +5683,24 @@ function PartnerLabs({ currentUser }: { currentUser: UserAccount }) {
     setTestSampleType('EDTA Whole Blood');
     setTestFasting('Not Required');
     setTestInstructions('No special preparation required.');
+    setTestParameters([]);
     setShowAddTest(true);
   };
 
   const openEditTestModal = (t: PartnerLabTest) => {
     setEditingTest(t);
     setTestName(t.name);
-    setTestCode(t.testCode);
+    setTestCode(t.testCode || '');
     setTestCategory(t.category || t.department || 'Pathology');
-    setTestPrice(String(t.price || ''));
-    setTestB2bCost(String(t.b2bCost || ''));
-    setTestPartnerShare(String(t.partnerShare || ''));
-    setTestAgentIncentive(String(t.agentIncentive || ''));
+    setTestPrice(String(t.price ?? ''));
+    setTestB2bCost(String(t.b2bCost ?? ''));
+    setTestPartnerShare(String(t.partnerShare ?? 0));
+    setTestAgentIncentive(String(t.agentIncentive ?? 0));
     setTestTurnaround(t.turnaround || 'Same Day');
     setTestSampleType(t.sampleType || 'EDTA Whole Blood');
     setTestFasting(t.fasting || 'Not Required');
     setTestInstructions(t.instructions || 'No special preparation required.');
+    setTestParameters(Array.isArray(t.parameters) ? t.parameters : []);
   };
 
   const handleSaveTest = async (e: FormEvent) => {
@@ -5788,6 +5723,7 @@ function PartnerLabs({ currentUser }: { currentUser: UserAccount }) {
       sampleType: testSampleType,
       fasting: testFasting,
       instructions: testInstructions,
+      parameters: testParameters.filter((p) => p.name.trim()),
     };
 
     try {
@@ -5926,23 +5862,18 @@ function PartnerLabs({ currentUser }: { currentUser: UserAccount }) {
           required
         />
       </Field>
-      <Field label="Test Code *">
+      <Field label="Test Code">
         <Input
           value={testCode}
           onChange={(e) => setTestCode(e.target.value)}
           placeholder="e.g. CBC-01"
-          required
         />
       </Field>
       <Field label="Category / Department">
         <Select value={testCategory} onChange={(e) => setTestCategory(e.target.value)}>
-          <option value="Pathology">Pathology</option>
-          <option value="Biochemistry">Biochemistry</option>
-          <option value="Microbiology">Microbiology</option>
-          <option value="Radiology">Radiology & Scans</option>
-          <option value="Cardiology">Cardiology</option>
-          <option value="Histopathology">Histopathology</option>
-          <option value="Molecular Diagnostics">Molecular Diagnostics</option>
+          {optionsWithCurrent(['Pathology', 'Biochemistry', 'Microbiology', 'Radiology', 'Cardiology', 'Histopathology', 'Molecular Diagnostics'], testCategory).map((o) => (
+            <option key={o} value={o}>{o === 'Radiology' ? 'Radiology & Scans' : o}</option>
+          ))}
         </Select>
       </Field>
       <Field label="Patient Price / MRP (₹) *">
@@ -5954,13 +5885,12 @@ function PartnerLabs({ currentUser }: { currentUser: UserAccount }) {
           required
         />
       </Field>
-      <Field label="Partner Lab Share / B2B Cost (₹) *">
+      <Field label="Partner Lab Share / B2B Cost (₹)">
         <Input
           type="number"
           value={testPartnerShare}
           onChange={(e) => setTestPartnerShare(e.target.value)}
           placeholder="e.g. 260"
-          required
         />
       </Field>
       <Field label="Referral Agent Incentive (₹)">
@@ -5973,30 +5903,17 @@ function PartnerLabs({ currentUser }: { currentUser: UserAccount }) {
       </Field>
       <Field label="Sample Type">
         <Select value={testSampleType} onChange={(e) => setTestSampleType(e.target.value)}>
-          <option value="EDTA Whole Blood">EDTA Whole Blood</option>
-          <option value="Serum">Serum</option>
-          <option value="Fluoride Plasma">Fluoride Plasma</option>
-          <option value="Urine Sample">Urine Sample</option>
-          <option value="Stool Sample">Stool Sample</option>
-          <option value="N/A - Imaging / Scan">N/A - Imaging / Scan</option>
+          {optionsWithCurrent(SAMPLE_TYPE_OPTIONS, testSampleType).map((o) => <option key={o} value={o}>{o}</option>)}
         </Select>
       </Field>
       <Field label="Turnaround Time (TAT)">
         <Select value={testTurnaround} onChange={(e) => setTestTurnaround(e.target.value)}>
-          <option value="2 Hours">2 Hours</option>
-          <option value="4 Hours">4 Hours</option>
-          <option value="Same Day">Same Day</option>
-          <option value="24 Hours">24 Hours</option>
-          <option value="48 Hours">48 Hours</option>
-          <option value="3-5 Days">3-5 Days</option>
+          {optionsWithCurrent(TURNAROUND_OPTIONS, testTurnaround).map((o) => <option key={o} value={o}>{o}</option>)}
         </Select>
       </Field>
       <Field label="Fasting">
         <Select value={testFasting} onChange={(e) => setTestFasting(e.target.value)}>
-          <option value="Not Required">Not Required</option>
-          <option value="8 Hours Fasting">8 Hours Fasting</option>
-          <option value="10-12 Hours Fasting">10-12 Hours Fasting</option>
-          <option value="Overnight Fasting">Overnight Fasting</option>
+          {optionsWithCurrent(FASTING_OPTIONS, testFasting).map((o) => <option key={o} value={o}>{o}</option>)}
         </Select>
       </Field>
       <Field label="Preparation Instructions" className="sm:col-span-2">
@@ -6006,6 +5923,9 @@ function PartnerLabs({ currentUser }: { currentUser: UserAccount }) {
           placeholder="e.g. 10-12 hours fasting required. Morning sample preferred."
         />
       </Field>
+      <div className="sm:col-span-2">
+        <ParametersEditor parameters={testParameters} onChange={setTestParameters} />
+      </div>
     </div>
   );
 
@@ -7036,6 +6956,81 @@ function CSVBulkUploadModal({
   );
 }
 
+const SAMPLE_TYPE_OPTIONS = ['EDTA Whole Blood', 'Serum', 'Fluoride Plasma', 'Urine Sample', 'Stool Sample', 'N/A - Imaging / Scan'];
+const TURNAROUND_OPTIONS = ['2 Hours', '4 Hours', 'Same Day', '24 Hours', '48 Hours', '3-5 Days'];
+const FASTING_OPTIONS = ['Not Required', '8 Hours Fasting', '10-12 Hours Fasting', 'Overnight Fasting'];
+
+// Keeps values imported from CSV (e.g. "24hrs", "Blood") selectable instead of silently showing the first option
+function optionsWithCurrent(options: string[], current: string): string[] {
+  return current && !options.includes(current) ? [current, ...options] : options;
+}
+
+// Editable list of test parameters (name / unit / normal range)
+function ParametersEditor({ parameters, onChange }: { parameters: TestParameter[]; onChange: (next: TestParameter[]) => void }) {
+  const update = (index: number, field: keyof TestParameter, value: string) => {
+    onChange(parameters.map((p, i) => (i === index ? { ...p, [field]: value } : p)));
+  };
+
+  return (
+    <div className="border-t border-border pt-4">
+      <div className="flex items-center justify-between mb-3">
+        <div>
+          <h3 className="text-sm font-bold text-foreground flex items-center gap-2"><FlaskConical size={14} className="text-primary" /> Test Parameters</h3>
+          <p className="text-[11px] text-muted-foreground mt-0.5">Add investigation parameters with normal reference ranges.</p>
+        </div>
+        <div className="flex gap-2">
+          {parameters.length > 0 && (
+            <Button type="button" variant="secondary" onClick={() => onChange([])} className="text-xs gap-1.5 text-destructive"><Trash2 size={12} /> Clear All</Button>
+          )}
+          <Button type="button" variant="secondary" onClick={() => onChange([...parameters, { id: `p-${Date.now()}`, name: '', unit: '', normalRange: '' }])} className="text-xs gap-1.5"><Plus size={12} /> Add Parameter</Button>
+        </div>
+      </div>
+
+      {parameters.length === 0 ? (
+        <div className="rounded-xl border border-dashed border-border py-4 text-center text-xs text-muted-foreground">
+          No parameters added. Click "Add Parameter" to add test parameters.
+        </div>
+      ) : (
+        <div className="space-y-2">
+          {parameters.map((param, i) => (
+            <div key={param.id || i} className="grid grid-cols-[1fr_100px_130px_28px] gap-2 items-center rounded-xl border border-border bg-muted/20 px-3 py-2">
+              <input
+                type="text"
+                value={param.name}
+                onChange={(e) => update(i, 'name', e.target.value)}
+                placeholder="Parameter name (e.g. Hemoglobin)"
+                className="rounded-lg border border-input bg-background px-2 py-1.5 text-xs focus:outline-none focus:ring-1 focus:ring-primary"
+              />
+              <input
+                type="text"
+                value={param.unit || ''}
+                onChange={(e) => update(i, 'unit', e.target.value)}
+                placeholder="Unit (g/dL)"
+                className="rounded-lg border border-input bg-background px-2 py-1.5 text-xs focus:outline-none focus:ring-1 focus:ring-primary"
+              />
+              <input
+                type="text"
+                value={param.normalRange || ''}
+                onChange={(e) => update(i, 'normalRange', e.target.value)}
+                placeholder="Normal Range"
+                className="rounded-lg border border-input bg-background px-2 py-1.5 text-xs focus:outline-none focus:ring-1 focus:ring-primary"
+              />
+              <button type="button" onClick={() => onChange(parameters.filter((_, idx) => idx !== i))} className="grid size-7 place-items-center rounded-lg hover:bg-destructive/10 text-destructive">
+                <X size={12} />
+              </button>
+            </div>
+          ))}
+          <div className="flex gap-1 text-[10px] text-muted-foreground px-1">
+            <span className="flex-1">Parameter Name</span>
+            <span className="w-[100px]">Unit</span>
+            <span className="w-[130px]">Normal Range</span>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
 // Tests Catalogue Component (with CSV Upload, Separate Partner Share / Incentive & Instructions)
 function Tests({ role }: { role: Role }) {
   const [search, setSearch] = useState('');
@@ -7078,28 +7073,39 @@ function Tests({ role }: { role: Role }) {
 
   useEffect(() => { loadTests(); }, [search, dept]);
 
-  const addParameter = () => {
-    setParameters((prev) => [...prev, { id: `p-${Date.now()}`, name: '', unit: '', normalRange: '' }]);
+  const [editingTestId, setEditingTestId] = useState<string | null>(null);
+
+  const openAddModal = () => {
+    setEditingTestId(null);
+    setTestCode(''); setName(''); setDepartment('Pathology'); setPrice('');
+    setPartnerShare('100'); setAgentIncentive('50');
+    setSampleType('EDTA Whole Blood'); setTurnaround('Same Day'); setFasting('Not Required');
+    setInstructions(''); setParameters([]);
+    setShowAdd(true);
   };
 
-  const updateParameter = (index: number, field: keyof TestParameter, value: string) => {
-    setParameters((prev) => {
-      const updated = [...prev];
-      updated[index] = { ...updated[index], [field]: value };
-      return updated;
-    });
-  };
-
-  const removeParameter = (index: number) => {
-    setParameters((prev) => prev.filter((_, i) => i !== index));
+  const openEditModal = (test: any) => {
+    setEditingTestId(test.id);
+    setTestCode(test.testCode || '');
+    setName(test.name || '');
+    setDepartment(test.department || 'Pathology');
+    setPrice(String(test.price ?? ''));
+    setPartnerShare(String(test.partnerShare ?? 0));
+    setAgentIncentive(String(test.agentIncentive ?? 0));
+    setSampleType(test.sampleType || 'EDTA Whole Blood');
+    setTurnaround(test.turnaround || 'Same Day');
+    setFasting(test.fasting || 'Not Required');
+    setInstructions(test.instructions || '');
+    setParameters(Array.isArray(test.parameters) ? test.parameters : []);
+    setShowAdd(true);
   };
 
   const handleAdd = async (e: FormEvent) => {
     e.preventDefault();
     if (!name || !price) { toast.error('Name and price are required'); return; }
     try {
-      await fetch('/api/tests', {
-        method: 'POST',
+      const res = await fetch(editingTestId ? `/api/tests/${encodeURIComponent(editingTestId)}` : '/api/tests', {
+        method: editingTestId ? 'PATCH' : 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           testCode: testCode || `TEST-${Math.floor(100 + Math.random() * 900)}`,
@@ -7115,13 +7121,13 @@ function Tests({ role }: { role: Role }) {
           parameters: parameters.filter((p) => p.name.trim()),
         }),
       });
-      toast.success('Test added to master catalogue');
+      if (!res.ok) throw new Error();
+      toast.success(editingTestId ? 'Test updated' : 'Test added to master catalogue');
       setShowAdd(false);
-      setName(''); setPrice(''); setInstructions(''); setTestCode(''); setParameters([]);
-      setSampleType('EDTA Whole Blood'); setTurnaround('Same Day'); setFasting('Not Required');
+      setEditingTestId(null);
       loadTests();
     } catch {
-      toast.error('Could not add test');
+      toast.error(editingTestId ? 'Could not update test' : 'Could not add test');
     }
   };
 
@@ -7137,7 +7143,7 @@ function Tests({ role }: { role: Role }) {
           isAdmin && (
             <div className="flex gap-2">
               <Button variant="secondary" onClick={() => setShowBulkUpload(true)}><Upload size={16} /> Bulk CSV Upload</Button>
-              <Button onClick={() => setShowAdd(true)}><Plus size={16} /> Add New Test</Button>
+              <Button onClick={openAddModal}><Plus size={16} /> Add New Test</Button>
             </div>
           )
         }
@@ -7170,6 +7176,7 @@ function Tests({ role }: { role: Role }) {
                   {role !== 'DOCTOR' && <th className="px-4 py-3 font-bold text-right text-[#a96816]">Agent Incentive</th>}
                   <th className="px-4 py-3 font-bold">Parameters</th>
                   <th className="px-4 py-3 font-bold">Status</th>
+                  {isAdmin && <th className="px-4 py-3 font-bold text-right">Actions</th>}
                 </tr>
               </thead>
               <tbody className="divide-y divide-border">
@@ -7205,6 +7212,18 @@ function Tests({ role }: { role: Role }) {
                         )}
                       </td>
                       <td className="px-4 py-4"><span className={cx('rounded-lg px-2 py-1 text-[10px] font-bold', statusTone('active'))}>Active</span></td>
+                      {isAdmin && (
+                        <td className="px-4 py-4 text-right">
+                          <button
+                            type="button"
+                            onClick={() => openEditModal(test)}
+                            className="inline-flex items-center gap-1 rounded-lg px-2 py-1 text-[11px] font-semibold text-primary hover:bg-primary/10"
+                            title="Edit price, details & parameters"
+                          >
+                            <Edit3 size={13} /> Edit
+                          </button>
+                        </td>
+                      )}
                     </tr>
                   );
                 })}
@@ -7217,7 +7236,7 @@ function Tests({ role }: { role: Role }) {
       {/* Single Test Add Modal */}
       <ModalPortal isOpen={showAdd} onClose={() => setShowAdd(false)} maxWidth="max-w-2xl">
         <div className="flex shrink-0 items-center justify-between border-b border-border p-6 pb-4 bg-card">
-          <h2 className="text-xl font-bold">Add Diagnostic Test</h2>
+          <h2 className="text-xl font-bold">{editingTestId ? `Edit Test: ${name}` : 'Add Diagnostic Test'}</h2>
           <button type="button" onClick={() => setShowAdd(false)} className="grid size-8 place-items-center rounded-full hover:bg-muted text-muted-foreground"><X size={16} /></button>
         </div>
         <form onSubmit={handleAdd} className="flex flex-col min-h-0 flex-1 overflow-hidden">
@@ -7226,9 +7245,7 @@ function Tests({ role }: { role: Role }) {
               <Field label="Test Code"><Input value={testCode} onChange={(e) => setTestCode(e.target.value)} placeholder="e.g. CBC-01" /></Field>
               <Field label="Department">
                 <Select value={department} onChange={(e) => setDepartment(e.target.value)}>
-                  <option value="Pathology">Pathology</option>
-                  <option value="Radiology">Radiology</option>
-                  <option value="Nuclear Medicine">Nuclear Medicine</option>
+                  {optionsWithCurrent(['Pathology', 'Radiology', 'Nuclear Medicine'], department).map((o) => <option key={o} value={o}>{o}</option>)}
                 </Select>
               </Field>
             </div>
@@ -7243,30 +7260,17 @@ function Tests({ role }: { role: Role }) {
             <div className="grid grid-cols-3 gap-3">
               <Field label="Sample Type">
                 <Select value={sampleType} onChange={(e) => setSampleType(e.target.value)}>
-                  <option value="EDTA Whole Blood">EDTA Whole Blood</option>
-                  <option value="Serum">Serum</option>
-                  <option value="Fluoride Plasma">Fluoride Plasma</option>
-                  <option value="Urine Sample">Urine Sample</option>
-                  <option value="Stool Sample">Stool Sample</option>
-                  <option value="N/A - Imaging / Scan">N/A - Imaging / Scan</option>
+                  {optionsWithCurrent(SAMPLE_TYPE_OPTIONS, sampleType).map((o) => <option key={o} value={o}>{o}</option>)}
                 </Select>
               </Field>
               <Field label="Turnaround Time (TAT)">
                 <Select value={turnaround} onChange={(e) => setTurnaround(e.target.value)}>
-                  <option value="2 Hours">2 Hours</option>
-                  <option value="4 Hours">4 Hours</option>
-                  <option value="Same Day">Same Day</option>
-                  <option value="24 Hours">24 Hours</option>
-                  <option value="48 Hours">48 Hours</option>
-                  <option value="3-5 Days">3-5 Days</option>
+                  {optionsWithCurrent(TURNAROUND_OPTIONS, turnaround).map((o) => <option key={o} value={o}>{o}</option>)}
                 </Select>
               </Field>
               <Field label="Fasting">
                 <Select value={fasting} onChange={(e) => setFasting(e.target.value)}>
-                  <option value="Not Required">Not Required</option>
-                  <option value="8 Hours Fasting">8 Hours Fasting</option>
-                  <option value="10-12 Hours Fasting">10-12 Hours Fasting</option>
-                  <option value="Overnight Fasting">Overnight Fasting</option>
+                  {optionsWithCurrent(FASTING_OPTIONS, fasting).map((o) => <option key={o} value={o}>{o}</option>)}
                 </Select>
               </Field>
             </div>
@@ -7274,62 +7278,11 @@ function Tests({ role }: { role: Role }) {
               <Input value={instructions} onChange={(e) => setInstructions(e.target.value)} placeholder="e.g. Fasting required for 8-12 hours" />
             </Field>
 
-            {/* Parameters Builder */}
-            <div className="border-t border-border pt-4">
-              <div className="flex items-center justify-between mb-3">
-                <div>
-                  <h3 className="text-sm font-bold text-foreground flex items-center gap-2"><FlaskConical size={14} className="text-primary" /> Test Parameters</h3>
-                  <p className="text-[11px] text-muted-foreground mt-0.5">Add investigation parameters with normal reference ranges.</p>
-                </div>
-                <Button type="button" variant="secondary" onClick={addParameter} className="text-xs gap-1.5"><Plus size={12} /> Add Parameter</Button>
-              </div>
-
-              {parameters.length === 0 ? (
-                <div className="rounded-xl border border-dashed border-border py-4 text-center text-xs text-muted-foreground">
-                  No parameters added. Click "Add Parameter" to add test parameters.
-                </div>
-              ) : (
-                <div className="space-y-2">
-                  {parameters.map((param, i) => (
-                    <div key={param.id} className="grid grid-cols-[1fr_100px_130px_28px] gap-2 items-center rounded-xl border border-border bg-muted/20 px-3 py-2">
-                      <input
-                        type="text"
-                        value={param.name}
-                        onChange={(e) => updateParameter(i, 'name', e.target.value)}
-                        placeholder="Parameter name (e.g. Hemoglobin)"
-                        className="rounded-lg border border-input bg-background px-2 py-1.5 text-xs focus:outline-none focus:ring-1 focus:ring-primary"
-                      />
-                      <input
-                        type="text"
-                        value={param.unit}
-                        onChange={(e) => updateParameter(i, 'unit', e.target.value)}
-                        placeholder="Unit (g/dL)"
-                        className="rounded-lg border border-input bg-background px-2 py-1.5 text-xs focus:outline-none focus:ring-1 focus:ring-primary"
-                      />
-                      <input
-                        type="text"
-                        value={param.normalRange}
-                        onChange={(e) => updateParameter(i, 'normalRange', e.target.value)}
-                        placeholder="Normal Range"
-                        className="rounded-lg border border-input bg-background px-2 py-1.5 text-xs focus:outline-none focus:ring-1 focus:ring-primary"
-                      />
-                      <button type="button" onClick={() => removeParameter(i)} className="grid size-7 place-items-center rounded-lg hover:bg-destructive/10 text-destructive">
-                        <X size={12} />
-                      </button>
-                    </div>
-                  ))}
-                  <div className="flex gap-1 text-[10px] text-muted-foreground px-1">
-                    <span className="flex-1">Parameter Name</span>
-                    <span className="w-[100px]">Unit</span>
-                    <span className="w-[130px]">Normal Range</span>
-                  </div>
-                </div>
-              )}
-            </div>
+            <ParametersEditor parameters={parameters} onChange={setParameters} />
           </div>
           <div className="flex shrink-0 justify-end gap-2 p-4 border-t border-border bg-muted/20 px-6">
             <Button type="button" variant="secondary" onClick={() => setShowAdd(false)}>Cancel</Button>
-            <Button type="submit">Add Test {parameters.filter((p) => p.name.trim()).length > 0 && `(${parameters.filter((p) => p.name.trim()).length} params)`}</Button>
+            <Button type="submit">{editingTestId ? 'Save Changes' : 'Add Test'} {parameters.filter((p) => p.name.trim()).length > 0 && `(${parameters.filter((p) => p.name.trim()).length} params)`}</Button>
           </div>
         </form>
       </ModalPortal>
