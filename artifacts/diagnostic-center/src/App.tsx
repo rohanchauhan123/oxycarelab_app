@@ -10,7 +10,7 @@ import {
   UserRound, UsersRound, WalletCards, X, XCircle, Shield, Package, Clock,
   MessageSquare, History, UserCheck, Tag, Upload, Edit3, Info, Eye, Download,
   ArrowLeft, FileCheck, DollarSign, Home, MapPin, Truck, Trash2, Filter, AlertTriangle, Send,
-  Building2, CreditCard, HandCoins, Mail
+  Building2, CreditCard, HandCoins, Mail, Share2, Copy, Printer
 } from 'lucide-react';
 import {
   getGetDashboardSummaryQueryKey, getListAppointmentsQueryKey, getListPatientsQueryKey,
@@ -130,6 +130,7 @@ interface ExtendedAppointment {
   items?: TestItemSnapshot[];
   totalPartnerShare?: number;
   totalAgentIncentive?: number;
+  createdAt?: string;
   updatedAt?: string;
 }
 
@@ -270,6 +271,153 @@ function statusTone(status = '') {
   return 'bg-[#e9f0f5] text-[#536675] border border-[#d2dfa8]';
 }
 function titleCase(value = '') { return value.replace(/_/g, ' ').replace(/\b\w/g, (letter) => letter.toUpperCase()); }
+function formatDateTime(value?: string | null) {
+  if (!value) return '—';
+  const date = new Date(value);
+  return Number.isNaN(date.valueOf())
+    ? value
+    : date.toLocaleString('en-IN', { day: '2-digit', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit', hour12: true });
+}
+
+// Standard sample-collection times, always offered for every test so a booking never lacks a slot.
+const STANDARD_COLLECTION_TIMES = [
+  '07:00 AM – 08:00 AM', '08:00 AM – 09:00 AM', '09:00 AM – 10:00 AM', '10:00 AM – 11:00 AM',
+  '11:00 AM – 12:00 PM', '12:00 PM – 01:00 PM', '01:00 PM – 02:00 PM', '02:00 PM – 03:00 PM',
+  '03:00 PM – 04:00 PM', '04:00 PM – 05:00 PM', '05:00 PM – 06:00 PM', '06:00 PM – 07:00 PM',
+];
+const ALL_TESTS_SLOT = 'All Tests';
+// Slots created for "All Tests" (or legacy generic names) apply to every test
+function isGenericSlotTest(name: string) {
+  return ['', 'all tests', 'all', 'general investigation', 'any test'].includes(name.trim().toLowerCase());
+}
+
+// Everything a patient / partner needs about a booking, in one place, used by the share card.
+function bookingShareDetails(a: ExtendedAppointment) {
+  const isHome = a.bookingType === 'Home Collection';
+  const total = Number(a.totalPrice ?? a.amount ?? 0);
+  const advance = Number(a.advancePayment ?? 0);
+  const balance = Number(a.remainingAmount ?? Math.max(0, total - advance));
+  const patientAddress = [a.address, a.pinCode].filter(Boolean).join(' - ');
+  const labAddress = [a.partnerLabName, a.partnerLabAddress].filter(Boolean).join(', ');
+  return {
+    bookingId: a.id,
+    name: a.patientName,
+    age: a.age ? `${a.age} yrs${a.gender ? ` (${a.gender})` : ''}` : (a.gender || '—'),
+    mobile: a.mobile,
+    tests: a.testName,
+    bookedOn: formatDateTime(a.createdAt || a.updatedAt),
+    collection: `${formatDay(a.collectionDate || a.date)}, ${a.timeSlot || a.time || '—'}`,
+    bookingType: a.bookingType || 'Lab Visit',
+    address: isHome ? (patientAddress || '—') : (patientAddress || labAddress || '—'),
+    lab: labAddress,
+    amount: money(total),
+    advance: money(advance),
+    balance: money(balance),
+    paymentStatus: a.paymentStatus || 'Pending',
+  };
+}
+
+function bookingShareText(a: ExtendedAppointment) {
+  const d = bookingShareDetails(a);
+  return [
+    '*Oxycare Diagnostics - Booking Details*',
+    '',
+    `Booking ID: ${d.bookingId}`,
+    `Name: ${d.name}`,
+    `Age: ${d.age}`,
+    `Mobile: ${d.mobile}`,
+    `Test(s): ${d.tests}`,
+    `Booked On: ${d.bookedOn}`,
+    `Sample Collection: ${d.collection} (${d.bookingType})`,
+    `Address: ${d.address}`,
+    ...(d.lab ? [`Lab: ${d.lab}`] : []),
+    `Amount: ${d.amount} (Advance ${d.advance}, Balance ${d.balance})`,
+    `Payment Status: ${d.paymentStatus}`,
+  ].join('\n');
+}
+
+function BookingShareModal({ appointment, onClose, title = 'Booking Details' }: { appointment: ExtendedAppointment | null; onClose: () => void; title?: string }) {
+  if (!appointment) return null;
+  const d = bookingShareDetails(appointment);
+  const text = bookingShareText(appointment);
+  const waNumber = String(appointment.mobile || '').replace(/\D/g, '').slice(-10);
+
+  const rows: Array<[string, string]> = [
+    ['Booking ID', d.bookingId],
+    ['Name', d.name],
+    ['Age', d.age],
+    ['Mobile No.', d.mobile],
+    ['Test Name', d.tests],
+    ['Booked Date & Time', d.bookedOn],
+    ['Sample Collection Date & Time', `${d.collection} · ${d.bookingType}`],
+    ['Complete Address', d.address],
+    ...(d.lab ? [['Partner Lab', d.lab] as [string, string]] : []),
+    ['Amount', `${d.amount}  (Advance ${d.advance} · Balance ${d.balance})`],
+    ['Payment Status', d.paymentStatus],
+  ];
+
+  const copy = async () => {
+    try { await navigator.clipboard.writeText(text); toast.success('Booking details copied'); }
+    catch { toast.error('Could not copy — please select and copy manually'); }
+  };
+  const nativeShare = async () => {
+    if (navigator.share) {
+      try { await navigator.share({ title: `Booking ${d.bookingId}`, text }); } catch { /* cancelled */ }
+    } else {
+      copy();
+    }
+  };
+  const print = () => {
+    const w = window.open('', '_blank', 'width=600,height=700');
+    if (!w) { toast.error('Allow pop-ups to print'); return; }
+    const esc = (s: string) => s.replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c] as string));
+    w.document.write(`<!doctype html><html><head><title>Booking ${esc(d.bookingId)}</title><style>body{font-family:Arial,sans-serif;padding:24px;color:#111}h2{margin:0 0 4px}p{margin:0 0 16px;color:#555}table{border-collapse:collapse;width:100%}td{border:1px solid #ccc;padding:8px;font-size:14px;vertical-align:top}td:first-child{font-weight:bold;width:40%;background:#f5f5f5}</style></head><body><h2>Oxycare Diagnostics</h2><p>Booking Details</p><table>${rows.map(([k, v]) => `<tr><td>${esc(k)}</td><td>${esc(String(v))}</td></tr>`).join('')}</table></body></html>`);
+    w.document.close();
+    w.focus();
+    w.print();
+  };
+
+  return (
+    <ModalPortal isOpen onClose={onClose} maxWidth="max-w-lg">
+      <div className="flex shrink-0 items-center justify-between border-b border-border p-6 pb-4 bg-card">
+        <div>
+          <div className="mono text-[10px] font-bold uppercase tracking-[.18em] text-primary">Booking #{d.bookingId}</div>
+          <h2 className="text-xl font-bold">{title}</h2>
+        </div>
+        <button onClick={onClose} className="grid size-8 place-items-center rounded-full hover:bg-muted text-muted-foreground"><X size={16} /></button>
+      </div>
+      <div className="flex-1 overflow-y-auto p-6 scrollbar-thin">
+        <div className="overflow-hidden rounded-2xl border border-border">
+          <table className="w-full text-left text-xs">
+            <tbody className="divide-y divide-border">
+              {rows.map(([k, v]) => (
+                <tr key={k}>
+                  <td className="w-[42%] bg-muted/40 px-3 py-2.5 font-bold text-muted-foreground align-top">{k}</td>
+                  <td className={cx('px-3 py-2.5 font-semibold text-foreground', k === 'Booking ID' && 'mono text-primary')}>
+                    {k === 'Payment Status' ? <span className={cx('rounded-lg px-2 py-0.5 text-[10px] font-bold', statusTone(v))}>{v}</span> : v}
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      </div>
+      <div className="flex shrink-0 flex-wrap justify-end gap-2 border-t border-border bg-card p-4">
+        <Button type="button" variant="secondary" onClick={copy}><Copy size={15} /> Copy</Button>
+        <Button type="button" variant="secondary" onClick={print}><Printer size={15} /> Print</Button>
+        <Button type="button" variant="secondary" onClick={nativeShare}><Share2 size={15} /> Share</Button>
+        <a
+          href={`https://wa.me/${waNumber.length === 10 ? `91${waNumber}` : ''}?text=${encodeURIComponent(text)}`}
+          target="_blank"
+          rel="noreferrer"
+          className="inline-flex h-10 items-center gap-2 rounded-xl bg-[#25D366] px-4 text-sm font-bold text-white hover:opacity-90"
+        >
+          <MessageSquare size={15} /> WhatsApp
+        </a>
+      </div>
+    </ModalPortal>
+  );
+}
 
 function Panel({ children, className = '', ...props }: { children: ReactNode; className?: string } & HTMLAttributes<HTMLElement>) {
   return <section className={cx('rounded-2xl border border-border bg-card shadow-[0_5px_18px_hsl(210_20%_60%_/_0.06)]', className)} {...props}>{children}</section>;
@@ -1849,10 +1997,11 @@ function EditAppointmentModal({
           age: Number(age) || 30,
           gender,
           bookingType,
-          address: bookingType === 'Home Collection' ? address : null,
-          pinCode: bookingType === 'Home Collection' ? pinCode : null,
-          collectionDate: bookingType === 'Home Collection' ? (collectionDate || date) : null,
-          timeSlot: bookingType === 'Home Collection' ? (timeSlot || time) : null,
+          address: bookingType === 'Home Collection' ? address : (appointment.address ?? null),
+          pinCode: bookingType === 'Home Collection' ? pinCode : (appointment.pinCode ?? null),
+          // Lab visits keep their sample collection date/time in sync with the appointment date/time
+          collectionDate: bookingType === 'Home Collection' ? (collectionDate || date) : date,
+          timeSlot: bookingType === 'Home Collection' ? (timeSlot || time) : time,
           date,
           time,
           partnerLabId: selectedLabId,
@@ -2454,6 +2603,7 @@ function AppointmentDetailPage({ params, currentUser }: { params: { id: string }
   const [fileName, setFileName] = useState('');
   const [viewingParams, setViewingParams] = useState<{ testName: string; testCode?: string; parameters: TestParameter[] } | null>(null);
   const [showEditModal, setShowEditModal] = useState(false);
+  const [showShare, setShowShare] = useState(false);
 
   const [date, setDate] = useState('');
   const [time, setTime] = useState('');
@@ -2569,11 +2719,20 @@ function AppointmentDetailPage({ params, currentUser }: { params: { id: string }
 
   return (
     <>
-      <div className="mb-6 flex items-center justify-between">
+      {showShare && <BookingShareModal appointment={apt} onClose={() => setShowShare(false)} />}
+      <div className="mb-6 flex flex-wrap gap-3 items-center justify-between">
         <Link href="/appointments">
           <Button variant="secondary" className="gap-1.5"><ArrowLeft size={16} /> Back to Appointments Queue</Button>
         </Link>
         <div className="flex items-center gap-3">
+          <Button
+            type="button"
+            variant="secondary"
+            onClick={() => setShowShare(true)}
+            className="gap-1.5 font-bold cursor-pointer"
+          >
+            <Share2 size={15} /> Share Details
+          </Button>
           <Button
             type="button"
             variant="secondary"
@@ -2611,6 +2770,18 @@ function AppointmentDetailPage({ params, currentUser }: { params: { id: string }
               </div>
             </div>
 
+            {/* Booking vs Sample Collection timing */}
+            <div className="mt-5 grid gap-3 sm:grid-cols-2 text-xs">
+              <div className="rounded-xl border border-border bg-muted/30 px-3 py-2">
+                <div className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground">Booked Date & Time</div>
+                <div className="mt-0.5 font-bold text-foreground">{formatDateTime(apt.createdAt || apt.updatedAt)}</div>
+              </div>
+              <div className="rounded-xl border border-primary/25 bg-primary/5 px-3 py-2">
+                <div className="text-[10px] font-bold uppercase tracking-wider text-primary">Sample Collection Date & Time</div>
+                <div className="mt-0.5 font-bold text-foreground">{formatDay(apt.collectionDate || apt.date)} · {apt.timeSlot || apt.time || '—'}</div>
+              </div>
+            </div>
+
             {/* Home Collection Details Card if applicable */}
             {isHomeColl && (
               <div className="mt-5 rounded-2xl border border-amber-300 bg-amber-500/10 p-4 text-amber-900">
@@ -2621,7 +2792,7 @@ function AppointmentDetailPage({ params, currentUser }: { params: { id: string }
                   <div><span className="font-semibold text-amber-700">Collection Date:</span> {formatDay(apt.collectionDate || apt.date)}</div>
                   <div><span className="font-semibold text-amber-700">Time Slot:</span> {apt.timeSlot || apt.time}</div>
                   <div className="sm:col-span-2"><span className="font-semibold text-amber-700">Full Address:</span> {apt.address || 'Address recorded on file'}</div>
-                  <div><span className="font-semibold text-amber-700">PIN Code:</span> {apt.pinCode || '560034'}</div>
+                  <div><span className="font-semibold text-amber-700">PIN Code:</span> {apt.pinCode || '—'}</div>
                 </div>
               </div>
             )}
@@ -3187,8 +3358,8 @@ function SlotsManager() {
 
   // Single slot state
   const [selectedDate, setSelectedDate] = useState(today);
-  const [selectedLab, setSelectedLab] = useState('Central Lab');
-  const [testName, setTestName] = useState('PET CT Scan');
+  const [selectedLab, setSelectedLab] = useState(''); // partner lab id, '' = all labs
+  const [testName, setTestName] = useState(ALL_TESTS_SLOT);
   const [startTime, setStartTime] = useState('09:00 AM');
   const [endTime, setEndTime] = useState('09:45 AM');
   const [capacity, setCapacity] = useState('3');
@@ -3196,8 +3367,8 @@ function SlotsManager() {
   // Multi-day range state
   const [rangeStartDate, setRangeStartDate] = useState(today);
   const [rangeEndDate, setRangeEndDate] = useState(today);
-  const [rangeLab, setRangeLab] = useState('Central Lab');
-  const [rangeTestName, setRangeTestName] = useState('PET CT Scan');
+  const [rangeLab, setRangeLab] = useState('');
+  const [rangeTestName, setRangeTestName] = useState(ALL_TESTS_SLOT);
   const [rangeStartTime, setRangeStartTime] = useState('09:00 AM');
   const [rangeEndTime, setRangeEndTime] = useState('09:45 AM');
   const [rangeCapacity, setRangeCapacity] = useState('5');
@@ -3218,7 +3389,29 @@ function SlotsManager() {
     }
   };
 
-  useEffect(() => { loadSlots(); }, []);
+  const [labs, setLabs] = useState<PartnerLab[]>([]);
+  useEffect(() => {
+    loadSlots();
+    fetch('/api/partner-labs').then((r) => r.json()).then((d) => setLabs(Array.isArray(d) ? d.filter((l: PartnerLab) => l.active !== false) : [])).catch(() => setLabs([]));
+  }, []);
+  const labName = (id: string) => labs.find((l) => l.id === id)?.name || 'All Labs';
+  // Test names offered for slot creation: tests of the chosen lab, or of every lab
+  const testOptions = (labId: string) => {
+    const pool = labId ? labs.filter((l) => l.id === labId) : labs;
+    return Array.from(new Set(pool.flatMap((l) => (l.tests || []).filter((t) => t.active !== false).map((t) => t.name)))).sort();
+  };
+  const renderLabSelect = (value: string, onChange: (v: string) => void) => (
+    <Select value={value} onChange={(e) => onChange(e.target.value)}>
+      <option value="">All Partner Labs</option>
+      {labs.map((l) => <option key={l.id} value={l.id}>{l.name}</option>)}
+    </Select>
+  );
+  const renderTestSelect = (value: string, onChange: (v: string) => void, labId: string) => (
+    <Select value={value} onChange={(e) => onChange(e.target.value)}>
+      <option value={ALL_TESTS_SLOT}>All Tests (slot applies to every test)</option>
+      {testOptions(labId).map((n) => <option key={n} value={n}>{n}</option>)}
+    </Select>
+  );
 
   const totalDaysInRange = useMemo(() => {
     const s = new Date(rangeStartDate);
@@ -3242,7 +3435,8 @@ function SlotsManager() {
           startTime,
           endTime,
           capacity: Number(capacity),
-          lab: selectedLab,
+          lab: labName(selectedLab),
+          partnerLabId: selectedLab || null,
           testName,
         }),
       });
@@ -3272,7 +3466,8 @@ function SlotsManager() {
           startTime: rangeStartTime,
           endTime: rangeEndTime,
           capacity: Number(rangeCapacity),
-          lab: rangeLab,
+          lab: labName(rangeLab),
+          partnerLabId: rangeLab || null,
           testName: rangeTestName,
         }),
       });
@@ -3352,14 +3547,10 @@ function SlotsManager() {
             <form onSubmit={handleCreateSlot} className="space-y-4">
               <Field label="Slot Date"><Input type="date" value={selectedDate} onChange={(e) => setSelectedDate(e.target.value)} /></Field>
               <Field label="Diagnostic Lab">
-                <Select value={selectedLab} onChange={(e) => setSelectedLab(e.target.value)}>
-                  <option value="Central Lab">Central Pathology Lab</option>
-                  <option value="Radiology">Radiology & Imaging Lab</option>
-                  <option value="Nuclear Medicine">Nuclear Medicine Lab</option>
-                </Select>
+                {renderLabSelect(selectedLab, setSelectedLab)}
               </Field>
               <Field label="Test / Investigation Name">
-                <Input value={testName} onChange={(e) => setTestName(e.target.value)} placeholder="e.g. PET CT Scan, MRI Brain" />
+                {renderTestSelect(testName, setTestName, selectedLab)}
               </Field>
               <div className="grid grid-cols-2 gap-3">
                 <Field label="Start Time"><Input value={startTime} onChange={(e) => setStartTime(e.target.value)} placeholder="09:00 AM" /></Field>
@@ -3403,14 +3594,10 @@ function SlotsManager() {
               </div>
 
               <Field label="Diagnostic Lab">
-                <Select value={rangeLab} onChange={(e) => setRangeLab(e.target.value)}>
-                  <option value="Central Lab">Central Pathology Lab</option>
-                  <option value="Radiology">Radiology & Imaging Lab</option>
-                  <option value="Nuclear Medicine">Nuclear Medicine Lab</option>
-                </Select>
+                {renderLabSelect(rangeLab, setRangeLab)}
               </Field>
               <Field label="Test / Investigation Name">
-                <Input value={rangeTestName} onChange={(e) => setRangeTestName(e.target.value)} placeholder="e.g. PET CT Scan, MRI Brain" />
+                {renderTestSelect(rangeTestName, setRangeTestName, rangeLab)}
               </Field>
               <div className="grid grid-cols-2 gap-3">
                 <Field label="Slot Start Time"><Input value={rangeStartTime} onChange={(e) => setRangeStartTime(e.target.value)} placeholder="09:00 AM" /></Field>
@@ -3423,7 +3610,7 @@ function SlotsManager() {
               {totalDaysInRange > 0 && (
                 <div className="rounded-xl border border-border bg-muted/30 px-4 py-3 text-xs">
                   <span className="font-bold text-foreground">Preview: </span>
-                  <span className="text-muted-foreground">Will generate <span className="font-bold text-primary">{totalDaysInRange} slots</span> · {rangeTestName} · {rangeLab} · {rangeCapacity} patients/day</span>
+                  <span className="text-muted-foreground">Will generate <span className="font-bold text-primary">{totalDaysInRange} slots</span> · {rangeTestName} · {labName(rangeLab)} · {rangeCapacity} patients/day</span>
                 </div>
               )}
 
@@ -3874,8 +4061,11 @@ function NewAppointment({ currentUser }: { currentUser: UserAccount }) {
   const [isHomeCollection, setIsHomeCollection] = useState(false);
   const [address, setAddress] = useState('');
   const [pinCode, setPinCode] = useState('');
+  // Sample collection date & time (used for both Lab Visit and Home Collection).
+  // collectionChoice is either `slot:<slotId>` (a configured slot) or `time:<label>` (a standard time).
   const [collectionDate, setCollectionDate] = useState(today);
-  const [timeSlot, setTimeSlot] = useState('08:00 AM – 09:00 AM');
+  const [collectionChoice, setCollectionChoice] = useState('');
+  const [bookingResult, setBookingResult] = useState<ExtendedAppointment | null>(null);
 
   // Auto-fill saved address and load past-test history the moment a registered patient is selected
   useEffect(() => {
@@ -3897,8 +4087,6 @@ function NewAppointment({ currentUser }: { currentUser: UserAccount }) {
   // Multi-Test Selection Cart State
   const [selectedTests, setSelectedTests] = useState<TestItemSnapshot[]>([]);
   const [testSearch, setTestSearch] = useState('');
-  const [bookingDate, setBookingDate] = useState(today);
-  const [slotId, setSlotId] = useState('');
   const [sendWhatsApp, setSendWhatsApp] = useState(true);
 
   // Payment Collection Handler State: Oxycare (Center Direct) vs Partner (Doctor / Agent)
@@ -3952,46 +4140,98 @@ function NewAppointment({ currentUser }: { currentUser: UserAccount }) {
       }));
   }, [selectedLab]);
 
-  // Filtered lab tests for search dropdown
+  // Does this lab conduct this cart item? (matched by id, test code or name)
+  const findInLab = (lab: PartnerLab, item: { testId: string; testCode?: string; testName: string }) => (lab.tests || []).find(
+    (lt) =>
+      lt.active !== false && (
+        lt.id === item.testId ||
+        (!!lt.testCode && !!item.testCode && lt.testCode.toLowerCase() === item.testCode.toLowerCase()) ||
+        lt.name.trim().toLowerCase() === item.testName.trim().toLowerCase()
+      )
+  );
+
+  // Before a lab is chosen, the test search covers every test of every active partner lab
+  // (one entry per test name, with the labs that conduct it).
+  const allLabsTests = useMemo(() => {
+    const byName = new Map<string, any>();
+    for (const lab of partnerLabs) {
+      for (const lt of lab.tests || []) {
+        if (lt.active === false) continue;
+        const key = lt.name.trim().toLowerCase();
+        const entry = byName.get(key);
+        const price = Number(lt.price || 0);
+        if (!entry) {
+          byName.set(key, {
+            id: lt.id,
+            name: lt.name,
+            testCode: lt.testCode,
+            department: lt.category || lt.department || 'Pathology',
+            price,
+            partnerShare: lt.partnerShare || 0,
+            agentIncentive: lt.agentIncentive || 0,
+            instructions: lt.instructions || 'Standard preparation',
+            parameters: lt.parameters || [],
+            labNames: [lab.name],
+            minPrice: price,
+            maxPrice: price,
+          });
+        } else {
+          entry.labNames.push(lab.name);
+          entry.minPrice = Math.min(entry.minPrice, price);
+          entry.maxPrice = Math.max(entry.maxPrice, price);
+        }
+      }
+    }
+    return Array.from(byName.values()).sort((a, b) => a.name.localeCompare(b.name));
+  }, [partnerLabs]);
+
+  const searchableTests = selectedLab ? labTests : allLabsTests;
+
+  // Filtered tests for search dropdown
   const filteredTests = useMemo(() => {
-    if (!testSearch) return labTests;
+    if (!testSearch) return searchableTests;
     const q = testSearch.toLowerCase();
-    return labTests.filter((t: any) =>
+    return searchableTests.filter((t: any) =>
       [t.name, t.testCode, t.department].some((v) => String(v || '').toLowerCase().includes(q))
     );
-  }, [labTests, testSearch]);
+  }, [searchableTests, testSearch]);
 
   const [testPickerOpen, setTestPickerOpen] = useState(false);
 
-  // Partner labs matching the lab search box
+  // Only labs that conduct EVERY selected test can be chosen; other labs are not listed.
   const eligibleLabs = useMemo(() => {
     const q = labSearch.toLowerCase().trim();
     return partnerLabs
+      .filter((lab) => selectedTests.every((item) => !!findInLab(lab, item)))
       .filter((lab) => !q || [lab.name, lab.address, lab.city, lab.contactPerson].some((v) =>
         String(v || '').toLowerCase().includes(q)
       ))
-      .map((lab) => ({ lab, testCount: (lab.tests || []).filter((lt) => lt.active !== false).length }));
-  }, [partnerLabs, labSearch]);
+      .map((lab) => ({
+        lab,
+        testCount: (lab.tests || []).filter((lt) => lt.active !== false).length,
+        cartTotal: selectedTests.reduce((sum, item) => sum + Number(findInLab(lab, item)?.price || 0) * item.quantity, 0),
+      }));
+  }, [partnerLabs, labSearch, selectedTests]);
+
+  // If exactly one lab conducts the selected tests, select it automatically.
+  useEffect(() => {
+    if (selectedLabId || selectedTests.length === 0) return;
+    const candidates = partnerLabs.filter((lab) => selectedTests.every((item) => !!findInLab(lab, item)));
+    if (candidates.length === 1) handleSelectLab(candidates[0]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selectedTests, selectedLabId, partnerLabs]);
 
   const handleSelectLab = (lab: PartnerLab) => {
     setSelectedLabId(lab.id);
     setLabSearch('');
     setIsChangingLab(false);
     setTestSearch('');
-    // Tests already in the cart are re-priced from the new lab; tests it doesn't conduct are removed
+    // Tests already in the cart are re-priced from the chosen lab; tests it doesn't conduct are removed
     if (selectedTests.length === 0) return;
-    const findInLab = (item: TestItemSnapshot) => (lab.tests || []).find(
-      (lt) =>
-        lt.active !== false && (
-          lt.id === item.testId ||
-          (lt.testCode && lt.testCode.toLowerCase() === (item.testCode || '').toLowerCase()) ||
-          lt.name.toLowerCase() === item.testName.toLowerCase()
-        )
-    );
-    const removed = selectedTests.filter((item) => !findInLab(item));
+    const removed = selectedTests.filter((item) => !findInLab(lab, item));
     setSelectedTests(
       selectedTests.flatMap((item) => {
-        const lt = findInLab(item);
+        const lt = findInLab(lab, item);
         if (!lt) return [];
         const price = Number(lt.price || 0);
         return [{
@@ -4065,15 +4305,39 @@ function NewAppointment({ currentUser }: { currentUser: UserAccount }) {
   const remainingBalance = Math.max(0, netPayable - (Number(advancePayment) || 0));
 
   useEffect(() => {
-    if (!bookingDate) return;
-    fetch(`/api/slots?date=${bookingDate}`)
+    if (!collectionDate) return;
+    fetch(`/api/slots?date=${collectionDate}`)
       .then((r) => r.json())
-      .then((data) => {
-        setAvailableSlots(data.filter((s: Slot) => Number(s.booked) < Number(s.capacity)));
-      });
-  }, [bookingDate]);
+      .then((data) => setAvailableSlots(Array.isArray(data) ? data : []))
+      .catch(() => setAvailableSlots([]));
+  }, [collectionDate]);
 
-  const selectedSlot = availableSlots.find((s) => s.id === slotId);
+  // Configured slots that apply to this booking: "All Tests" slots apply to every test,
+  // test-specific slots only when that test is in the cart, lab-specific slots only for that lab.
+  const matchingSlots = useMemo(() => {
+    const names = selectedTests.map((t) => t.testName.trim().toLowerCase());
+    return (availableSlots as any[]).filter((s) => {
+      if (Number(s.capacity) > 0 && Number(s.booked) >= Number(s.capacity)) return false;
+      const slotTest = String(s.testName || '').trim().toLowerCase();
+      const testOk = isGenericSlotTest(slotTest) || names.includes(slotTest);
+      const labOk = !s.partnerLabId || s.partnerLabId === selectedLabId;
+      return testOk && labOk;
+    });
+  }, [availableSlots, selectedTests, selectedLabId]);
+
+  // Clear a chosen slot that no longer applies (date, test or lab changed)
+  useEffect(() => {
+    if (collectionChoice.startsWith('slot:') && !matchingSlots.some((s) => `slot:${s.id}` === collectionChoice)) {
+      setCollectionChoice('');
+    }
+  }, [matchingSlots, collectionChoice]);
+
+  const selectedSlot = collectionChoice.startsWith('slot:')
+    ? matchingSlots.find((s) => `slot:${s.id}` === collectionChoice)
+    : undefined;
+  const collectionTimeLabel = selectedSlot
+    ? `${selectedSlot.startTime} – ${selectedSlot.endTime}`
+    : collectionChoice.startsWith('time:') ? collectionChoice.slice(5) : '';
 
   const handleSubmit = async (e: FormEvent) => {
     e.preventDefault();
@@ -4094,6 +4358,9 @@ function NewAppointment({ currentUser }: { currentUser: UserAccount }) {
     if (isHomeCollection && (!address || !pinCode)) {
       toast.error('Full address and PIN code are required for Home Collection bookings.'); return;
     }
+    if (!collectionDate || !collectionTimeLabel) {
+      toast.error('Please select the sample collection date and time.'); return;
+    }
 
     setSubmitting(true);
     try {
@@ -4102,9 +4369,9 @@ function NewAppointment({ currentUser }: { currentUser: UserAccount }) {
         partnerLabName: selectedLab.name,
         partnerLabAddress: selectedLab.address,
         items: selectedTests,
-        slotId: slotId || 'slot-cbc-1100',
-        date: selectedSlot?.date || bookingDate,
-        time: selectedSlot?.startTime || '09:30 AM',
+        slotId: selectedSlot?.id || null,
+        date: collectionDate,
+        time: selectedSlot?.startTime || collectionTimeLabel.split(' – ')[0],
         doctor: doctor || null,
         referredBy: referredBy || doctor || currentUser.name,
         source: isHomeCollection ? 'Home Collection' : source,
@@ -4119,10 +4386,10 @@ function NewAppointment({ currentUser }: { currentUser: UserAccount }) {
         notes,
         isHomeCollection,
         bookingType: isHomeCollection ? 'Home Collection' : 'Lab Visit',
-        address: isHomeCollection ? address : null,
-        pinCode: isHomeCollection ? pinCode : null,
-        collectionDate: isHomeCollection ? collectionDate : bookingDate,
-        timeSlot: isHomeCollection ? timeSlot : '09:30 AM',
+        address: address.trim() || null,
+        pinCode: pinCode.trim() || null,
+        collectionDate,
+        timeSlot: collectionTimeLabel,
         createdBy: currentUser.name,
         sendWhatsApp,
       };
@@ -4143,16 +4410,18 @@ function NewAppointment({ currentUser }: { currentUser: UserAccount }) {
       });
 
       if (!res.ok) {
-        const err = await res.json();
+        const err = await res.json().catch(() => ({}));
         throw new Error(err.error || 'Failed to create booking');
       }
+      const created: ExtendedAppointment = await res.json();
       toast.success(
         sendWhatsApp
-          ? `✅ Booking created & WhatsApp confirmation dispatched to patient!`
-          : `✅ Booking created successfully (${selectedTests.length} tests)!`
+          ? `✅ Booking #${created.id} created & WhatsApp confirmation dispatched to patient!`
+          : `✅ Booking #${created.id} created successfully (${selectedTests.length} tests)!`
       );
       queryClient.invalidateQueries({ queryKey: getListAppointmentsQueryKey() });
-      navigate('/appointments');
+      // Show the booking details with share options; closing it goes to the queue
+      setBookingResult(created);
     } catch (err: any) {
       toast.error(err.message || 'Could not create appointment');
     } finally {
@@ -4162,6 +4431,11 @@ function NewAppointment({ currentUser }: { currentUser: UserAccount }) {
 
   return (
     <>
+      <BookingShareModal
+        appointment={bookingResult}
+        title="Booking Confirmed — Share Details"
+        onClose={() => { setBookingResult(null); navigate('/appointments'); }}
+      />
       <PageTitle eyebrow="Frontdesk & Partner Booking" title="Create Patient Booking" detail="Select single or multiple diagnostic tests/packages, specify partner lab, and snapshot financial rates." />
       <Panel className="max-w-4xl p-6">
         <form onSubmit={handleSubmit} className="space-y-6">
@@ -4186,30 +4460,56 @@ function NewAppointment({ currentUser }: { currentUser: UserAccount }) {
               </label>
             </div>
 
-            {/* Home Collection Address & Time Slot Fields */}
-            {isHomeCollection && (
-              <div className="mt-4 pt-4 border-t border-primary/15 grid gap-3 sm:grid-cols-2">
-                <Field label="Collection Date *">
-                  <Input type="date" value={collectionDate} onChange={(e) => setCollectionDate(e.target.value)} />
-                </Field>
-                <Field label="Preferred Time Slot *">
-                  <Select value={timeSlot} onChange={(e) => setTimeSlot(e.target.value)}>
-                    <option value="07:00 AM – 08:00 AM">07:00 AM – 08:00 AM</option>
-                    <option value="08:00 AM – 09:00 AM">08:00 AM – 09:00 AM</option>
-                    <option value="09:00 AM – 10:00 AM">09:00 AM – 10:00 AM</option>
-                    <option value="10:00 AM – 11:00 AM">10:00 AM – 11:00 AM</option>
-                    <option value="11:00 AM – 12:00 PM">11:00 AM – 12:00 PM</option>
-                    <option value="04:00 PM – 05:00 PM">04:00 PM – 05:00 PM</option>
-                  </Select>
-                </Field>
-                <Field label="Full Patient Home Address *" className="sm:col-span-2">
-                  <Input value={address} onChange={(e) => setAddress(e.target.value)} placeholder="House/Flat No., Street, Landmark, Area..." required />
-                </Field>
-                <Field label="PIN Code *">
-                  <Input value={pinCode} onChange={(e) => setPinCode(e.target.value)} placeholder="e.g. 560034" required />
-                </Field>
+            {/* Patient Address — required for Home Collection, optional for Lab Visit */}
+            <div className="mt-4 pt-4 border-t border-primary/15 grid gap-3 sm:grid-cols-3">
+              <Field label={isHomeCollection ? 'Complete Patient Address *' : 'Complete Patient Address'} className="sm:col-span-2">
+                <Input value={address} onChange={(e) => setAddress(e.target.value)} placeholder="House/Flat No., Street, Landmark, Area, City..." required={isHomeCollection} />
+              </Field>
+              <Field label={isHomeCollection ? 'PIN Code *' : 'PIN Code'}>
+                <Input value={pinCode} onChange={(e) => setPinCode(e.target.value)} placeholder="e.g. 560034" required={isHomeCollection} />
+              </Field>
+            </div>
+          </div>
+
+          {/* Booking Date & Time (automatic) + Sample Collection Date & Time */}
+          <div className="space-y-3 rounded-2xl border border-border bg-card p-4">
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <div className="flex items-center gap-2">
+                <div className="grid size-7 place-items-center rounded-lg bg-primary/10 text-primary">
+                  <CalendarDays size={15} />
+                </div>
+                <span className="font-bold text-sm text-foreground">Sample Collection Date & Time *</span>
               </div>
-            )}
+              <span className="mono rounded-lg bg-muted px-2.5 py-1 text-[10px] font-bold text-muted-foreground">
+                Booking date & time: recorded automatically on save
+              </span>
+            </div>
+            <div className="grid gap-3 sm:grid-cols-2">
+              <Field label={isHomeCollection ? 'Home Collection Date *' : 'Lab Visit / Collection Date *'}>
+                <Input type="date" value={collectionDate} min={today} onChange={(e) => setCollectionDate(e.target.value)} required />
+              </Field>
+              <Field label="Collection Time *">
+                <Select value={collectionChoice} onChange={(e) => setCollectionChoice(e.target.value)} required>
+                  <option value="">Select collection time...</option>
+                  {matchingSlots.length > 0 && (
+                    <optgroup label="Configured slots">
+                      {matchingSlots.map((s: any) => (
+                        <option key={s.id} value={`slot:${s.id}`}>
+                          {s.startTime} – {s.endTime}
+                          {Number(s.capacity) > 0 ? ` (${Number(s.capacity) - Number(s.booked)} left)` : ''}
+                          {!isGenericSlotTest(String(s.testName || '')) ? ` · ${s.testName}` : ''}
+                        </option>
+                      ))}
+                    </optgroup>
+                  )}
+                  <optgroup label="Standard collection times">
+                    {STANDARD_COLLECTION_TIMES.map((t) => (
+                      <option key={t} value={`time:${t}`}>{t}</option>
+                    ))}
+                  </optgroup>
+                </Select>
+              </Field>
+            </div>
           </div>
 
           {/* Patient Selection */}
@@ -4358,46 +4658,100 @@ function NewAppointment({ currentUser }: { currentUser: UserAccount }) {
             )}
           </div>
 
-          {/* Booking Date & Slot Selection — Lab Visit mode */}
-          {!isHomeCollection && (
-            <div className="space-y-3 border-t border-border pt-5">
-              <div className="flex items-center gap-2 mb-1">
-                <div className="grid size-7 place-items-center rounded-lg bg-primary/10 text-primary">
-                  <CalendarDays size={15} />
-                </div>
-                <span className="font-bold text-sm text-foreground">Appointment Date & Time Slot</span>
+          {/* Multiple Test Selection & Cart Table */}
+          <div className="space-y-4 border-t border-border pt-5">
+            <div className="flex items-center justify-between">
+              <div>
+                <h3 className="font-bold text-base text-foreground">Step 1: Select Tests</h3>
+                <p className="text-xs text-muted-foreground">
+                  {selectedLab ? `Showing only tests conducted by ${selectedLab.name}` : 'Search tests from all partner labs. The lab list below narrows to labs that conduct them.'}
+                </p>
               </div>
-              <div className="grid gap-3 sm:grid-cols-2">
-                <Field label="Appointment Date *">
-                  <Input
-                    type="date"
-                    value={bookingDate}
-                    onChange={(e) => setBookingDate(e.target.value)}
-                    required
-                  />
-                </Field>
-                <Field label="Available Time Slot">
-                  {availableSlots.length === 0 ? (
-                    <div className="rounded-xl border border-dashed border-border bg-muted/30 px-3 py-2 text-xs text-muted-foreground">
-                      No slots available for selected date. Booking will use default 09:30 AM.
-                    </div>
-                  ) : (
-                    <Select value={slotId} onChange={(e) => setSlotId(e.target.value)}>
-                      <option value="">Walk-in / Any available slot</option>
-                      {availableSlots.map((s) => (
-                        <option key={s.id} value={s.id}>
-                          {s.startTime} — {s.endTime} ({Number(s.capacity) - Number(s.booked)} seats left)
-                        </option>
-                      ))}
-                    </Select>
-                  )}
-                </Field>
-              </div>
+              <span className="mono rounded bg-primary/10 px-2.5 py-1 text-xs font-bold text-primary">{selectedTests.length} Tests Selected</span>
             </div>
-          )}
 
-          <div className="border-t border-border pt-5">
-            {/* Step 1: Mandatory Partner Lab Selection — tests below come from this lab */}
+            {/* Test Search & Picker (lab's own catalogue only) */}
+            <div className="relative">
+              <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground" size={16} />
+              <Input
+                value={testSearch}
+                onChange={(e) => setTestSearch(e.target.value)}
+                onFocus={() => setTestPickerOpen(true)}
+                onBlur={() => setTestPickerOpen(false)}
+                placeholder={selectedLab ? `Search ${labTests.length} tests in ${selectedLab.name} (e.g. CBC, Lipid, Thyroid)...` : `Search ${allLabsTests.length} tests across all partner labs (e.g. CBC, Lipid, Thyroid)...`}
+                className="pl-9"
+              />
+              {(testSearch || testPickerOpen) && (
+                <div
+                  className="absolute left-0 right-0 top-full z-20 mt-1 max-h-64 overflow-y-auto rounded-xl border border-border bg-card shadow-xl p-1"
+                  onMouseDown={(e) => e.preventDefault()}
+                >
+                  {filteredTests.length === 0 && (
+                    <div className="p-4 text-center text-xs text-muted-foreground">
+                      {selectedLab
+                        ? (labTests.length === 0
+                          ? `${selectedLab.name} has no tests yet. Add tests in Partner Labs → Manage Tests.`
+                          : `No test in ${selectedLab.name} matches "${testSearch}". Use "Change Lab" to book it at another lab.`)
+                        : (allLabsTests.length === 0
+                          ? 'No partner lab has tests yet. Add tests in Partner Labs → Manage Tests.'
+                          : `No test matches "${testSearch}".`)}
+                    </div>
+                  )}
+                  {filteredTests.map((t: any) => {
+                    const paramList: TestParameter[] = Array.isArray(t.parameters) ? t.parameters : [];
+
+                    return (
+                      <button
+                        key={t.id}
+                        type="button"
+                        onClick={() => { addTestToCart(t); setTestSearch(''); }}
+                        className="flex w-full items-center justify-between rounded-lg px-3 py-2 text-xs text-left hover:bg-muted transition-colors"
+                      >
+                        <div className="flex-1 pr-3">
+                          <div className="flex items-center gap-2 flex-wrap">
+                            <span className="font-bold">{t.name}</span>
+                            <span className="mono text-[10px] text-muted-foreground">({t.testCode || t.id})</span>
+                            {paramList.length > 0 && (
+                              <span className="mono rounded bg-primary/15 px-2 py-0.5 text-[10px] font-bold text-primary flex items-center gap-1">
+                                🔬 {paramList.length} Parameters
+                              </span>
+                            )}
+                          </div>
+                          <div className="text-[10px] text-muted-foreground mt-0.5">
+                            {t.department} · Pre-prep: {t.instructions || 'No special preparation needed.'}
+                          </div>
+                          {!selectedLab && Array.isArray(t.labNames) && (
+                            <div className="text-[10px] font-semibold text-[#167366] mt-0.5 truncate max-w-[380px]">
+                              <Building2 size={10} className="inline mr-1" />
+                              Available at: {t.labNames.join(', ')}
+                            </div>
+                          )}
+                          {paramList.length > 0 && (
+                            <div className="text-[10px] text-primary/80 font-medium truncate max-w-[380px] mt-0.5">
+                              🔬 Included: {paramList.map((p) => p.name).join(', ')}
+                            </div>
+                          )}
+                        </div>
+                        <div className="text-right shrink-0">
+                          <div className="font-bold text-primary">
+                            {!selectedLab && t.minPrice !== undefined && t.minPrice !== t.maxPrice
+                              ? `${money(t.minPrice)} – ${money(t.maxPrice)}`
+                              : money(t.price)}
+                          </div>
+                          <div className="text-[9px] text-[#167366] font-medium">Share: {money(t.partnerShare || 0)}</div>
+                          {canViewIncentive && (
+                            <div className="text-[9px] text-[#a96816]">Inc: {money(t.agentIncentive || 0)}</div>
+                          )}
+                        </div>
+                      </button>
+                    );
+                  })}
+                </div>
+              )}
+            </div>
+
+          <div>
+            {/* Step 2: Mandatory Partner Lab Selection — only labs conducting the selected tests */}
             <div className="rounded-2xl border border-border bg-card p-4 space-y-3 shadow-xs">
               <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-1.5">
                 <div className="flex items-center gap-2">
@@ -4409,7 +4763,11 @@ function NewAppointment({ currentUser }: { currentUser: UserAccount }) {
                       <span className="font-bold text-xs uppercase tracking-wider text-foreground">Assigned Partner Laboratory</span>
                       <span className="mono rounded bg-destructive/10 px-1.5 py-0.2 text-[9px] font-bold text-destructive">MANDATORY *</span>
                     </div>
-                    <p className="text-[11px] text-muted-foreground">Step 1: Select the partner laboratory first — only tests conducted by this lab can be booked.</p>
+                    <p className="text-[11px] text-muted-foreground">
+                      {selectedTests.length > 0
+                        ? 'Step 2: Only labs that conduct all the selected tests are listed.'
+                        : 'Step 2: Add tests above — only labs that conduct them will be listed.'}
+                    </p>
                   </div>
                 </div>
                 {selectedLab && (
@@ -4462,10 +4820,12 @@ function NewAppointment({ currentUser }: { currentUser: UserAccount }) {
                   <div className="mt-1.5 max-h-56 overflow-y-auto rounded-xl border border-border bg-card shadow-2xl p-1.5 space-y-1">
                     {eligibleLabs.length === 0 ? (
                       <div className="p-4 text-center text-xs text-muted-foreground">
-                        No partner labs found matching "{labSearch}".
+                        {labSearch
+                          ? `No partner lab matching "${labSearch}" conducts the selected tests.`
+                          : 'No single partner lab conducts all the selected tests. Remove a test or add it to a lab in Partner Labs → Manage Tests.'}
                       </div>
                     ) : (
-                      eligibleLabs.map(({ lab, testCount }) => (
+                      eligibleLabs.map(({ lab, testCount, cartTotal }) => (
                         <button
                           key={lab.id}
                           type="button"
@@ -4491,13 +4851,23 @@ function NewAppointment({ currentUser }: { currentUser: UserAccount }) {
                             )}>
                               {testCount > 0 ? `${testCount} Tests` : 'No Tests Added'}
                             </span>
+                            {selectedTests.length > 0 && (
+                              <div className="mt-1 text-[11px] font-bold text-primary">{money(cartTotal)}</div>
+                            )}
                           </div>
                         </button>
                       ))
                     )}
                   </div>
                   {isChangingLab && selectedLab && (
-                    <div className="mt-1.5 flex justify-end">
+                    <div className="mt-1.5 flex justify-end gap-4">
+                      <button
+                        type="button"
+                        onClick={() => { setSelectedLabId(''); setIsChangingLab(false); }}
+                        className="text-xs text-muted-foreground hover:text-destructive font-semibold hover:underline"
+                      >
+                        Clear lab (search tests from all labs)
+                      </button>
                       <button
                         type="button"
                         onClick={() => setIsChangingLab(false)}
@@ -4511,85 +4881,6 @@ function NewAppointment({ currentUser }: { currentUser: UserAccount }) {
               )}
             </div>
           </div>
-
-          {/* Multiple Test Selection & Cart Table */}
-          <div className="space-y-4 border-t border-border pt-5">
-            <div className="flex items-center justify-between">
-              <div>
-                <h3 className="font-bold text-base text-foreground">Step 2: Select Tests</h3>
-                <p className="text-xs text-muted-foreground">
-                  {selectedLab ? `Showing only tests conducted by ${selectedLab.name}` : 'Select a partner lab above to see its tests.'}
-                </p>
-              </div>
-              <span className="mono rounded bg-primary/10 px-2.5 py-1 text-xs font-bold text-primary">{selectedTests.length} Tests Selected</span>
-            </div>
-
-            {/* Test Search & Picker (lab's own catalogue only) */}
-            <div className="relative">
-              <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground" size={16} />
-              <Input
-                value={testSearch}
-                onChange={(e) => setTestSearch(e.target.value)}
-                onFocus={() => setTestPickerOpen(true)}
-                onBlur={() => setTestPickerOpen(false)}
-                disabled={!selectedLab}
-                placeholder={selectedLab ? `Search ${labTests.length} tests in ${selectedLab.name} (e.g. CBC, Lipid, Thyroid)...` : 'Select a partner lab first'}
-                className="pl-9"
-              />
-              {selectedLab && (testSearch || testPickerOpen) && (
-                <div
-                  className="absolute left-0 right-0 top-full z-20 mt-1 max-h-64 overflow-y-auto rounded-xl border border-border bg-card shadow-xl p-1"
-                  onMouseDown={(e) => e.preventDefault()}
-                >
-                  {filteredTests.length === 0 && (
-                    <div className="p-4 text-center text-xs text-muted-foreground">
-                      {labTests.length === 0
-                        ? `${selectedLab.name} has no tests yet. Add tests in Partner Labs → Manage Tests.`
-                        : `No test in ${selectedLab.name} matches "${testSearch}".`}
-                    </div>
-                  )}
-                  {filteredTests.map((t: any) => {
-                    const paramList: TestParameter[] = Array.isArray(t.parameters) ? t.parameters : [];
-
-                    return (
-                      <button
-                        key={t.id}
-                        type="button"
-                        onClick={() => { addTestToCart(t); setTestSearch(''); }}
-                        className="flex w-full items-center justify-between rounded-lg px-3 py-2 text-xs text-left hover:bg-muted transition-colors"
-                      >
-                        <div className="flex-1 pr-3">
-                          <div className="flex items-center gap-2 flex-wrap">
-                            <span className="font-bold">{t.name}</span>
-                            <span className="mono text-[10px] text-muted-foreground">({t.testCode || t.id})</span>
-                            {paramList.length > 0 && (
-                              <span className="mono rounded bg-primary/15 px-2 py-0.5 text-[10px] font-bold text-primary flex items-center gap-1">
-                                🔬 {paramList.length} Parameters
-                              </span>
-                            )}
-                          </div>
-                          <div className="text-[10px] text-muted-foreground mt-0.5">
-                            {t.department} · Pre-prep: {t.instructions || 'No special preparation needed.'}
-                          </div>
-                          {paramList.length > 0 && (
-                            <div className="text-[10px] text-primary/80 font-medium truncate max-w-[380px] mt-0.5">
-                              🔬 Included: {paramList.map((p) => p.name).join(', ')}
-                            </div>
-                          )}
-                        </div>
-                        <div className="text-right shrink-0">
-                          <div className="font-bold text-primary">{money(t.price)}</div>
-                          <div className="text-[9px] text-[#167366] font-medium">Share: {money(t.partnerShare || 0)}</div>
-                          {canViewIncentive && (
-                            <div className="text-[9px] text-[#a96816]">Inc: {money(t.agentIncentive || 0)}</div>
-                          )}
-                        </div>
-                      </button>
-                    );
-                  })}
-                </div>
-              )}
-            </div>
 
             {/* Selected Tests Cart Table */}
             {selectedTests.length > 0 ? (
@@ -4880,7 +5171,7 @@ function NewAppointment({ currentUser }: { currentUser: UserAccount }) {
                   </span>
                 </div>
                 <div className="text-foreground/80 italic font-sans leading-relaxed pt-0.5">
-                  "Namaste {patientMode === 'registered' ? (selectedPatientObj?.name || 'Patient') : (customName || 'Patient')}! Your diagnostic booking for {selectedTests.map((t) => t.testName).join(', ') || 'selected tests'} on {bookingDate} is confirmed at Oxycare Diagnostics ({isHomeCollection ? 'Home Collection' : 'Lab Visit'}). {discountAmount > 0 ? `Total MRP: ${money(totalMRP)}, Discount: ${money(discountAmount)}, Net Payable: ${money(netPayable)}` : `Total: ${money(netPayable)}`}, Advance Paid: {money(Number(advancePayment))}, Balance: {money(remainingBalance)}. Payment Collection: {paymentCollectedBy === 'Partner' ? 'Handled by Partner' : 'Collected by Oxycare Diagnostics'}. We look forward to serving you."
+                  "Namaste {patientMode === 'registered' ? (selectedPatientObj?.name || 'Patient') : (customName || 'Patient')}! Your diagnostic booking for {selectedTests.map((t) => t.testName).join(', ') || 'selected tests'} is confirmed at Oxycare Diagnostics ({isHomeCollection ? 'Home Collection' : 'Lab Visit'}). Sample collection: {collectionDate}{collectionTimeLabel ? `, ${collectionTimeLabel}` : ''}. {discountAmount > 0 ? `Total MRP: ${money(totalMRP)}, Discount: ${money(discountAmount)}, Net Payable: ${money(netPayable)}` : `Total: ${money(netPayable)}`}, Advance Paid: {money(Number(advancePayment))}, Balance: {money(remainingBalance)}. Payment Collection: {paymentCollectedBy === 'Partner' ? 'Handled by Partner' : 'Collected by Oxycare Diagnostics'}. We look forward to serving you."
                 </div>
               </div>
             )}

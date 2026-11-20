@@ -58,6 +58,28 @@ function uid(prefix: string) {
   return `${prefix}-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 7)}`;
 }
 
+// Booking IDs are plain sequential numbers starting at 1000. Older random "APT-xxxx" IDs are
+// ignored when computing the next number. Generation + insert run under an in-process lock so
+// two simultaneous bookings never receive the same number (the API runs as a single process).
+const FIRST_BOOKING_ID = 1000;
+let bookingIdQueue: Promise<unknown> = Promise.resolve();
+
+function withBookingIdLock<T>(fn: () => Promise<T>): Promise<T> {
+  const run = bookingIdQueue.then(fn, fn);
+  bookingIdQueue = run.catch(() => undefined);
+  return run;
+}
+
+async function nextBookingId(): Promise<string> {
+  const appointments = await records("appointment");
+  let max = FIRST_BOOKING_ID - 1;
+  for (const a of appointments) {
+    const raw = String(a.id ?? "");
+    if (/^\d+$/.test(raw)) max = Math.max(max, Number(raw));
+  }
+  return String(max + 1);
+}
+
 async function logAudit(user: string, role: string, action: string, entity: string, entityId: string, details?: any) {
   const audit = {
     id: uid("aud"),
@@ -1243,8 +1265,9 @@ router.post("/slots", async (req, res) => {
           capacity: Number(body.capacity || 5),
           booked: 0,
           status: "Available",
-          testName: body.testName || "General Investigation",
-          lab: body.lab || "Central Lab",
+          testName: body.testName || "All Tests",
+          lab: body.lab || "All Labs",
+          partnerLabId: body.partnerLabId || null,
         };
         await db.insert(diagnosticRecordsTable).values({ id: `slot:${newSlot.id}`, entity: "slot", payload: newSlot });
         createdSlots.push(newSlot);
@@ -1275,8 +1298,9 @@ router.post("/slots", async (req, res) => {
           capacity: Number(body.capacity || 2),
           booked: 0,
           status: "Available",
-          testName: body.testName || "General Investigation",
-          lab: body.lab || "Central Lab",
+          testName: body.testName || "All Tests",
+          lab: body.lab || "All Labs",
+          partnerLabId: body.partnerLabId || null,
         };
         await db.insert(diagnosticRecordsTable).values({ id: `slot:${newSlot.id}`, entity: "slot", payload: newSlot });
         createdSlots.push(newSlot);
@@ -1294,8 +1318,9 @@ router.post("/slots", async (req, res) => {
     capacity: Number(body.capacity || 2),
     booked: 0,
     status: "Available",
-    testName: body.testName || "General Investigation",
-    lab: body.lab || "Central Lab",
+    testName: body.testName || "All Tests",
+    lab: body.lab || "All Labs",
+    partnerLabId: body.partnerLabId || null,
   };
   await db.insert(diagnosticRecordsTable).values({ id: `slot:${newSlot.id}`, entity: "slot", payload: newSlot });
   await logAudit("Admin Priya", "ADMIN", "CREATE_SLOT", "slot", newSlot.id);
@@ -1713,6 +1738,16 @@ router.get("/appointments/export-csv", async (req, res) => {
 // Multi-Test & Home Collection Booking Creation
 router.post("/appointments", async (req, res) => {
   const body = req.body;
+
+  // A configured slot is optional: bookings can also use a standard collection time.
+  // Reject a full slot before anything (patient, ledger) is written.
+  const chosenSlot = body.slotId ? await record("slot", String(body.slotId)) : undefined;
+  if (chosenSlot) {
+    const capacity = Number(chosenSlot.capacity || 0);
+    if (capacity > 0 && Number(chosenSlot.booked || 0) >= capacity) {
+      return res.status(409).json({ error: `The ${chosenSlot.startTime} slot on ${chosenSlot.date} is full. Please pick another time.` });
+    }
+  }
   const patients = await records("patient");
   const tests = await records("test");
   const doctorPrices = await records("doctor_price");
@@ -1825,23 +1860,12 @@ router.post("/appointments", async (req, res) => {
   const primaryTestName = testNames.join(", ");
   const primaryLab = partnerLabName || (tests.find((t) => t.id === items[0]?.testId)?.department === "Pathology" ? "Central Lab" : (tests.find((t) => t.id === items[0]?.testId)?.department || "Central Lab"));
 
-  const slots = await records("slot");
-  let slot = slots.find((item) => item.id === body.slotId);
-
-  if (!slot) {
-    const newSlot = {
-      id: `slot-${uid("s")}`,
-      date: body.date || today(),
-      startTime: body.time || "09:30 AM",
-      endTime: "10:15 AM",
-      capacity: 5,
-      booked: 1,
-      status: "Available",
-      testName: primaryTestName,
-      lab: primaryLab,
-    };
-    await db.insert(diagnosticRecordsTable).values({ id: `slot:${newSlot.id}`, entity: "slot", payload: newSlot });
-    slot = newSlot;
+  // Count this booking against the chosen configured slot (capacity was checked above)
+  if (chosenSlot) {
+    const fresh = (await record("slot", String(chosenSlot.id))) || chosenSlot;
+    const capacity = Number(fresh.capacity || 0);
+    const newBooked = Number(fresh.booked || 0) + 1;
+    await save("slot", { ...fresh, booked: newBooked, status: capacity > 0 && newBooked >= capacity ? "Full" : "Available" });
   }
 
   const subtotal = calculatedTotal;
@@ -1860,12 +1884,15 @@ router.post("/appointments", async (req, res) => {
   const isHomeColl = Boolean(body.isHomeCollection || body.bookingType === "Home Collection");
   const paymentCollectedBy = body.paymentCollectedBy === "Partner" ? "Partner" : "Oxycare";
 
+  const bookedAt = new Date().toISOString();
   const appointment = {
-    id: `APT-${Math.floor(1053 + Math.random() * 8000)}`,
+    id: "", // assigned sequentially (1000, 1001, ...) just before insert
     patientId: patient.id,
     patientName: patient.name,
     uhid: patient.uhid,
     mobile: patient.mobile,
+    age: patient.age ?? null,
+    gender: patient.gender ?? null,
     testId: items[0]?.testId || "test-cbc",
     testName: primaryTestName,
     lab: primaryLab,
@@ -1904,10 +1931,14 @@ router.post("/appointments", async (req, res) => {
     items,
     totalPartnerShare: calculatedPartnerShare,
     totalAgentIncentive: calculatedAgentIncentive,
-    updatedAt: new Date().toISOString(),
+    createdAt: bookedAt,
+    updatedAt: bookedAt,
   };
 
-  await db.insert(diagnosticRecordsTable).values({ id: `appointment:${appointment.id}`, entity: "appointment", payload: appointment });
+  await withBookingIdLock(async () => {
+    appointment.id = await nextBookingId();
+    await db.insert(diagnosticRecordsTable).values({ id: `appointment:${appointment.id}`, entity: "appointment", payload: appointment });
+  });
 
   // Auto-post to ledger for doctor/agent referral tracking
   if (body.referredBy || body.doctor) {
@@ -1955,7 +1986,7 @@ router.post("/appointments", async (req, res) => {
     const configs = await records("whatsapp_config");
     const waConfig = configs[0] as any;
     const collMsg = paymentCollectedBy === "Partner" ? "Payment Handled by Partner" : "Payment Collected by Oxycare Diagnostics";
-    const msgText = `Namaste ${patient.name}! Your appointment ${appointment.id} for ${primaryTestName} on ${appointment.date} at ${appointment.time} is confirmed at Oxycare Diagnostics (${appointment.bookingType}). Total: ₹${totalPrice}, Advance: ₹${advancePayment}, Balance Due: ₹${remainingAmount} (${collMsg}).`;
+    const msgText = `Namaste ${patient.name}! Your booking #${appointment.id} for ${primaryTestName} is confirmed at Oxycare Diagnostics (${appointment.bookingType}). Sample collection: ${appointment.collectionDate}, ${appointment.timeSlot}. Total: ₹${totalPrice}, Advance: ₹${advancePayment}, Balance Due: ₹${remainingAmount} (${collMsg}).`;
 
     let waStatus = "Delivered";
     let waResponse = "Auto-dispatched on booking";
